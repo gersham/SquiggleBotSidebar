@@ -94,8 +94,8 @@ compactness. Delete via a chip's hover-×, `/drop`, or `squigglebot channel
 rm <name>`; `squigglebot amnesia [name|all]` wipes memory.
 
 **Slash commands** (either input, handled locally): `/help /channels /join
-/drop /amnesia /model /thinking /mode /agent /chat /emotion /play /sleep /wake
-/doc /status /hush`. `/model`, `/thinking`, `/agent`, `/mode`, `/chat` persist to the
+/drop /amnesia /model /thinking /tier /mode /agent /chat /emotion /play /sleep /wake
+/doc /status /hush`. `/model`, `/thinking`, `/tier`, `/agent`, `/mode`, `/chat` persist to the
 config and steer the agent CLI.
 
 ## Personality
@@ -116,11 +116,12 @@ announce theme switches and fret about low battery.
   `interactive`, `sleepAfter`, `fidgets`, `idleFps`, `busyFps`,
   `pokeAnimation`, `bubbleColor`, `bubbleTextColor`, `eyes`.
 - **Agent tuning**: `~/.config/squigglebot/config.json` (`agentMode`,
-  `agentModel`, `agentThinking`, `agentCli`, `chatMode` terminal|window) —
-  or the slash commands (`/mode`, `/model`, `/thinking`, `/agent`, `/chat`).
-  Shipped default (`config.default.json`): codex on `gpt-5.6-luna` at
-  reasoning effort `high`; `/model clear` / `/thinking clear` fall back to
-  the agent CLI's own defaults.
+  `agentModel`, `agentThinking`, `agentTier` fast|flex (codex service tier),
+  `agentCli`, `chatMode` terminal|window) — or the slash commands (`/mode`,
+  `/model`, `/thinking`, `/tier`, `/agent`, `/chat`). Shipped default
+  (`config.default.json`): codex on `gpt-5.6-luna` at reasoning effort `high`
+  on the `fast` tier; `/model clear` etc. fall back to the agent CLI's own
+  defaults.
 - **Persona**: `~/.config/squigglebot/agent-prompt.md`.
 
 ## Development

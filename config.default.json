@@ -41,5 +41,6 @@
     "layer": "top",
     "monitor": "",
     "clickThrough": false
-  }
+  },
+  "agentTier": "fast"
 }

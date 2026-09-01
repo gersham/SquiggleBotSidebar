@@ -57,7 +57,7 @@ touch "$log"
 
 # Agent tuning from squigglebot's config: which CLI (default: omarchy's
 # default agent; SQUIGGLE_AGENT overrides for testing), which model,
-# reasoning effort, and agentMode:
+# reasoning effort, codex service tier (fast|flex), and agentMode:
 #   read  — read-only (agent default sandbox)
 #   write — can edit files / run commands, sandboxed (default)
 #   full  — no sandbox, no approvals; his hands are fully yours
@@ -68,6 +68,7 @@ agent="${SQUIGGLE_AGENT:-}"
 mode="$(jq -r '.agentMode // "write"' "$cfgjson" 2>/dev/null || echo write)"
 model="$(jq -r '.agentModel // empty' "$cfgjson" 2>/dev/null || true)"
 thinking="$(jq -r '.agentThinking // empty' "$cfgjson" 2>/dev/null || true)"
+tier="$(jq -r '.agentTier // empty' "$cfgjson" 2>/dev/null || true)"
 
 sessfile="$chdir/session.$agent"
 newsidf="$chdir/.newsid"
@@ -90,6 +91,9 @@ agent_flags() {
     esac
     [[ -n $model ]] && flags+=(-m "$model")
     [[ -n $thinking ]] && flags+=(-c "model_reasoning_effort=\"$thinking\"")
+    # Processing speed: "fast" (priority) or "flex". codex warns and drops it
+    # when the model doesn't offer that tier, so a bad value is harmless.
+    [[ -n $tier ]] && flags+=(-c "service_tier=\"$tier\"")
     ;;
   claude)
     case "$mode" in

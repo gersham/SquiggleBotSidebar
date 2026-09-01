@@ -249,7 +249,7 @@ Item {
         case "help":
             return "Commands: /channels, /join <name>, /drop <name>, /amnesia [name|all], "
                 + "/model [name|clear], /thinking [minimal|low|medium|high|clear], "
-                + "/mode [read|write|full], /agent [codex|claude|...|clear], /chat [terminal|window], "
+                + "/mode [read|write|full], /agent [codex|claude|...|clear], /tier [fast|flex|clear], /chat [terminal|window], "
                 + "/emotion <name>, /play <name>, /sleep, /wake, /doc, /status, /hush. "
                 + "Or start a message with #channel."
         case "channels":
@@ -284,6 +284,7 @@ Item {
         case "thinking":
         case "mode":
         case "agent":
+        case "tier":
         case "chat":
             return setAgentConfig(cmd, arg)
         case "emotion":
@@ -331,7 +332,7 @@ Item {
     }
 
     function setAgentConfig(cmd, arg) {
-        const keys = { model: "agentModel", thinking: "agentThinking", mode: "agentMode", agent: "agentCli", chat: "chatMode" }
+        const keys = { model: "agentModel", thinking: "agentThinking", mode: "agentMode", agent: "agentCli", tier: "agentTier", chat: "chatMode" }
         const key = keys[cmd]
         const current = agentCfg[key] || (cmd === "mode" ? "write" : cmd === "chat" ? "terminal" : "")
         if (!arg) return cmd + ": " + (current || "(default)")
@@ -340,6 +341,9 @@ Item {
         }
         if (cmd === "mode" && ["read", "write", "full"].indexOf(arg) === -1) {
             return "usage: /mode read|write|full"
+        }
+        if (cmd === "tier" && arg !== "clear" && ["fast", "flex"].indexOf(arg) === -1) {
+            return "usage: /tier fast|flex|clear (codex only)"
         }
         if (cmd === "chat" && arg !== "clear" && ["terminal", "window"].indexOf(arg) === -1) {
             return "usage: /chat terminal|window"
@@ -358,6 +362,7 @@ Item {
             + " · model " + (agentCfg.agentModel || "default")
             + " · thinking " + (agentCfg.agentThinking || "default")
             + " · mode " + (agentCfg.agentMode || "write")
+            + " · tier " + (agentCfg.agentTier || "default")
             + " · chat " + chatMode
             + (pondering ? " · pondering (" + sendQueue.length + " queued)" : "")
     }
