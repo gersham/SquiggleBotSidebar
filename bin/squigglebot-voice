@@ -41,7 +41,6 @@ hold_ms=550
 hold_s=0.55
 
 start_rec() {
-  date +%s%3N >"$dir/t0"
   pw-record --rate 16000 --channels 1 --format s16 "$dir/rec.wav" >/dev/null 2>&1 &
   local rec=$!
   echo "$rec" >"$dir/pid"
@@ -63,8 +62,15 @@ stop_rec() { # $1 = pid
 
 case "${1:-}" in
 press)
+  # Stamp the press before anything slow. The firmware key releases ~50ms
+  # after pressing — faster than the voiceGate IPC round trip below — so
+  # `release` waits on the pressing marker instead of racing ahead, and the
+  # tap duration is measured from here, not from when recording began.
+  date +%s%3N >"$dir/t0"
+  touch "$dir/pressing"
   if [[ -f "$dir/pid" ]] && kill -0 "$(cat "$dir/pid")" 2>/dev/null; then
     log "press: already recording"
+    rm -f "$dir/pressing"
     exit 0
   fi
   # Never arm a recording while the input bubble or chat window is up, or
@@ -75,13 +81,22 @@ press)
   if [[ "$(omarchy-shell squigglebot voiceGate 2>/dev/null)" == "no" ]]; then
     touch "$dir/gated"
     log "press: gated (input/chat/bubble up)"
+    rm -f "$dir/pressing"
     exit 0
   fi
   rm -f "$dir/gated"
   start_rec
+  rm -f "$dir/pressing"
   ;;
 
 release)
+  # A press still in flight (its gate IPC) must land first, or this release
+  # finds no recording to stop and the one started right after runs forever.
+  for _ in $(seq 60); do
+    [[ -f "$dir/pressing" ]] || break
+    sleep 0.025
+  done
+  rm -f "$dir/pressing"
   # A gated press recorded nothing: the tap is a plain dismiss/summon
   # toggle, acted on immediately — no double-tap beat, since voice can't
   # start from a gated state anyway.
@@ -156,7 +171,7 @@ release)
   ;;
 
 cancel)
-  rm -f "$dir/tap1" "$dir/gated"
+  rm -f "$dir/tap1" "$dir/gated" "$dir/pressing"
   if [[ -f "$dir/pid" ]]; then
     pid="$(cat "$dir/pid")"
     stop_rec "$pid"
