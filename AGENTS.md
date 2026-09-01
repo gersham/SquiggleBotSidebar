@@ -25,7 +25,8 @@ standalone desktop Quickshell instance either (`quickshell/shell.qml`, the
   widget's primary instance only: agent send/reply queues, channels, slash
   commands, the keyboard input bubble (layer-shell, exclusive keyboard), and
   the breakout chat window (FloatingWindow, geometry remembered in
-  `~/.local/state/squigglebot/chatwin.json`).
+  `~/.local/state/squigglebot/chatwin.json`) — now the fallback: `openChat()`
+  runs `squigglebot-chat` unless `chatMode` is "window" or the launcher exits 3.
 - `quickshell/Mascot.qml`, `quickshell/SpeechBubble.qml`,
   `quickshell/engine/*.mjs` — shared renderer + engine. Engine files under
   `engine/` are ported from open-mascot (MIT): keep upstream-derived files
@@ -37,8 +38,24 @@ standalone desktop Quickshell instance either (`quickshell/shell.qml`, the
   <fn> [args]`.
 - `bin/squigglebot-agent` — headless run of the omarchy default agent with
   per-channel Hermes-style memory (`channels/<name>/{MEMORY.md,history.log,
-  summary.txt}` under `~/.local/state/squigglebot/`). Agents block reading an
-  open stdin pipe under quickshell — keep `</dev/null` on every invocation.
+  summary.txt}` under `~/.local/state/squigglebot/`). With codex/claude each
+  channel is one persistent agent session (`channels/<name>/session.<agent>`):
+  first message = `codex exec` / `claude -p --session-id` with the full
+  prompt, later ones = `codex exec resume` / `claude -p --resume` with just
+  the `[squiggle-bridge]`-marked message; a resume that yields nothing drops
+  the id and reopens. `--interactive-argv` prints the argv that resumes the
+  thread in the agent's TUI (exit 3 = no session support). Agents block
+  reading an open stdin pipe under quickshell — keep `</dev/null` on every
+  invocation. `SQUIGGLE_AGENT=claude` overrides the agent for testing.
+- `bin/squigglebot-chat [channel]` — the breakout: focuses the channel's
+  terminal if open, else bootstraps the thread (one greeting run) and opens
+  `xdg-terminal-exec --app-id=org.omarchy.squigglebot-chat.<channel>` via
+  uwsm-app with the resume argv. Floating/centered/45%x70% comes from an
+  `o.window(...)` rule injected with `hyprctl eval`, guarded by a Lua global
+  so it is added once per Hyprland config lifetime — nothing is written to
+  the user's Hyprland config. This Hyprland only accepts Lua dispatchers
+  (`hl.dsp.focus({ window = "address:..." })`); legacy `focuswindow`,
+  `closewindow`, `resizewindowpixel` are rejected with exit 7.
 - `bin/squigglebot-voice` — the summon-key entry (press/release), recording,
   live mic levels, voxtype transcription. Resolved relative to Widget.qml
   for click-to-cancel; symlinked into `~/.local/bin` by install.sh for the

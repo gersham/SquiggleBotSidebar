@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Open a channel's squigglebot conversation in a floating terminal window,
+# resumed in the configured agent's own interactive CLI (codex or claude).
+# The bubble and this terminal are two views of the same thread: what you say
+# here the bubble remembers, and vice versa.
+#
+# Usage: squigglebot-chat [channel]      (default: the current channel)
+# Exit 3: the agent has no resumable sessions (ChatHost falls back to its own
+# chat window).
+set -uo pipefail
+
+statedir="${XDG_STATE_HOME:-$HOME/.local/state}/squigglebot"
+channel="${1:-}"
+[[ -n $channel ]] || channel="$(jq -r '.current // "general"' "$statedir/channels.json" 2>/dev/null || echo general)"
+channel="$(printf '%s' "$channel" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9_-')"
+[[ -n $channel ]] || channel="general"
+
+here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+class="org.omarchy.squigglebot-chat.$channel"
+title="Squigglebot #$channel"
+
+window_for() { hyprctl clients -j | jq -r --arg c "$class" '.[] | select(.class == $c) | .address' | head -1; }
+# This Hyprland speaks Lua dispatchers only (legacy `focuswindow address:..`
+# is rejected), same call omarchy-launch-or-focus makes.
+focus_window() { hyprctl dispatch "hl.dsp.focus({ window = \"address:$1\" })" >/dev/null 2>&1; }
+
+# One window per channel: already open → focus it.
+addr="$(window_for)"
+if [[ -n $addr ]]; then
+  focus_window "$addr"
+  exit 0
+fi
+
+# Ensure the thread exists (bootstraps it on first open) and get the argv
+# that resumes it interactively, with the same sandbox/model as the bubble.
+tmp="$(mktemp)"
+"$here/squigglebot-agent" --channel "$channel" --interactive-argv >"$tmp"
+rc=$?
+if ((rc != 0)); then
+  rm -f "$tmp"
+  exit "$rc"
+fi
+mapfile -t argv <"$tmp"
+rm -f "$tmp"
+
+# Chat-sized floating window, centered: 45% x 70% of the focused monitor.
+read -r mw mh < <(hyprctl monitors -j | jq -r '.[] | select(.focused) | "\(.width / .scale | floor) \(.height / .scale | floor)"' | head -1)
+w=$(((${mw:-1600} * 45) / 100))
+h=$(((${mh:-900} * 70) / 100))
+
+# Float rule for our windows, added once per Hyprland config lifetime (the
+# Lua global survives across evals until a reload, when it's re-added).
+# Nothing is written to the user's Hyprland config.
+hyprctl eval "if not _G.squigglebot_chat_rule then _G.squigglebot_chat_rule = true; o.window('^org\\\\.omarchy\\\\.squigglebot-chat\\\\..*\$', { float = true, center = true, size = { $w, $h } }) end" >/dev/null 2>&1 || true
+
+setsid uwsm-app -- xdg-terminal-exec --app-id="$class" --title="$title" --dir="$HOME" -e "${argv[@]}" >/dev/null 2>&1 &
+
+# Focus it once it is up (the float rule above has already placed it).
+for _ in $(seq 40); do
+  addr="$(window_for)"
+  [[ -n $addr ]] && break
+  sleep 0.1
+done
+[[ -n $addr ]] && focus_window "$addr"
+exit 0

@@ -249,7 +249,7 @@ Item {
         case "help":
             return "Commands: /channels, /join <name>, /drop <name>, /amnesia [name|all], "
                 + "/model [name|clear], /thinking [minimal|low|medium|high|clear], "
-                + "/mode [read|write|full], /agent [codex|claude|...|clear], "
+                + "/mode [read|write|full], /agent [codex|claude|...|clear], /chat [terminal|window], "
                 + "/emotion <name>, /play <name>, /sleep, /wake, /doc, /status, /hush. "
                 + "Or start a message with #channel."
         case "channels":
@@ -284,6 +284,7 @@ Item {
         case "thinking":
         case "mode":
         case "agent":
+        case "chat":
             return setAgentConfig(cmd, arg)
         case "emotion":
             if (!arg) return "usage: /emotion <name>"
@@ -330,15 +331,18 @@ Item {
     }
 
     function setAgentConfig(cmd, arg) {
-        const keys = { model: "agentModel", thinking: "agentThinking", mode: "agentMode", agent: "agentCli" }
+        const keys = { model: "agentModel", thinking: "agentThinking", mode: "agentMode", agent: "agentCli", chat: "chatMode" }
         const key = keys[cmd]
-        const current = agentCfg[key] || (cmd === "mode" ? "write" : "")
+        const current = agentCfg[key] || (cmd === "mode" ? "write" : cmd === "chat" ? "terminal" : "")
         if (!arg) return cmd + ": " + (current || "(default)")
         if (cmd === "thinking" && arg !== "clear" && ["minimal", "low", "medium", "high"].indexOf(arg) === -1) {
             return "usage: /thinking minimal|low|medium|high|clear"
         }
         if (cmd === "mode" && ["read", "write", "full"].indexOf(arg) === -1) {
             return "usage: /mode read|write|full"
+        }
+        if (cmd === "chat" && arg !== "clear" && ["terminal", "window"].indexOf(arg) === -1) {
+            return "usage: /chat terminal|window"
         }
         const value = arg === "clear" ? "" : arg
         const cfg = agentCfg
@@ -354,6 +358,7 @@ Item {
             + " · model " + (agentCfg.agentModel || "default")
             + " · thinking " + (agentCfg.agentThinking || "default")
             + " · mode " + (agentCfg.agentMode || "write")
+            + " · chat " + chatMode
             + (pondering ? " · pondering (" + sendQueue.length + " queued)" : "")
     }
 
@@ -669,11 +674,41 @@ Item {
     property bool chatOpen: false
     property bool channelPanelOpen: false
 
+    // Breakout: by default the channel's conversation opens in a floating
+    // terminal running the agent's own interactive CLI, resumed on the same
+    // thread the bubble uses (squigglebot-chat). chatMode "window" in
+    // config.json keeps the built-in chat window instead; agents without
+    // resumable sessions fall back to it automatically (launcher exit 3).
+    readonly property string chatMode: agentCfg.chatMode === "window" ? "window" : "terminal"
+
     function openChat() {
+        if (hearing) closeInput(false)
+        if (chatMode === "terminal") {
+            if (chatLaunchProc.running) return
+            chatLaunchProc.command = ["squigglebot-chat", currentChannel]
+            chatLaunchProc.running = true
+            // First open on a channel bootstraps the thread: seconds of agent
+            // time. He visibly thinks until the terminal is up.
+            if (host && !host.saying) host.play("thinking")
+            return
+        }
+        openChatWindow()
+    }
+
+    function openChatWindow() {
         chatOpen = true
         if (hearing) closeInput(false)
         Qt.callLater(() => chatInput.forceActiveFocus())
         if (chatSavedX >= 0) chatMoveTimer.restart()
+    }
+
+    Process {
+        id: chatLaunchProc
+        onExited: (exitCode, exitStatus) => {
+            if (root.host && !root.host.saying && !root.hearing && !root.pondering) root.host.rest()
+            if (exitCode === 3) root.openChatWindow()
+            else if (exitCode !== 0) root.commandFeedback("...couldn't open the terminal chat (exit " + exitCode + ").")
+        }
     }
 
     function closeChat() {

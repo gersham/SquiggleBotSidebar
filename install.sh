@@ -7,11 +7,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 mkdir -p ~/.config/omarchy/plugins ~/.config/squigglebot ~/.local/bin
-chmod +x bin/squigglebot bin/squigglebot-agent bin/squigglebot-voice
+chmod +x bin/squigglebot bin/squigglebot-agent bin/squigglebot-voice bin/squigglebot-chat
 ln -sfn "$PWD" ~/.config/omarchy/plugins/gersham.squigglebotsidebar
 ln -sf "$PWD/bin/squigglebot" ~/.local/bin/squigglebot
 ln -sf "$PWD/bin/squigglebot-agent" ~/.local/bin/squigglebot-agent
 ln -sf "$PWD/bin/squigglebot-voice" ~/.local/bin/squigglebot-voice
+ln -sf "$PWD/bin/squigglebot-chat" ~/.local/bin/squigglebot-chat
 # The standalone gersham.squigglebot plugin is folded into this repo. Remove
 # a stale install so two copies never register the same `squigglebot` IPC
 # target or double-render the mascot.

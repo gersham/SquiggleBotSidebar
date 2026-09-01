@@ -744,9 +744,13 @@ BarWidget {
 
     function chat(mode: string): string {
       if (!chatHost.item) return "error: not ready"
-      if (mode === "close" || (mode === "toggle" && chatHost.item.chatOpen)) chatHost.item.closeChat()
-      else chatHost.item.openChat()
-      return chatHost.item.chatOpen ? "open" : "closed"
+      if (mode === "close" || (mode === "toggle" && chatHost.item.chatOpen)) {
+        chatHost.item.closeChat()
+        return "closed"
+      }
+      chatHost.item.openChat()
+      // Terminal mode hands off to squigglebot-chat; nothing to report open.
+      return chatHost.item.chatOpen ? "open" : (chatHost.item.chatMode === "terminal" ? "terminal" : "closed")
     }
 
     function channel(name: string): string {

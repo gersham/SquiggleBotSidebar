@@ -42,24 +42,34 @@ axis (top / middle / bottom), and a clock sits at the foot.
 - **Summon hotkey** (e.g. the NuPhy AI key — `squigglebot-voice
   press`/`release` bound in `~/.config/hypr/bindings.lua`): **tap** opens a
   keyboard input bubble beside him on keyup — type, **Return** sends,
-  **Shift+Return** newline, **Ctrl+Return** sends and opens the chat window,
+  **Shift+Return** newline, **Ctrl+Return** sends and opens the terminal chat,
   **Esc** cancels; tapping again dismisses. **Hold** to talk: recording
   starts on keydown, the bar mascot becomes a live waveform of your mic,
   and releasing transcribes with voxtype and sends the text as if typed.
-- **Click him**: same input bubble. **Double-click**: the chat window.
+- **Click him**: same input bubble. **Double-click**: the terminal chat.
 - **CLI**: `squigglebot tell "..."` — plus `say`, `hush`, `ask`, `summon`,
   `chat`, `channel`, `heard`, `emotion`, `play`, `poke`, `sleep`, `wake`,
   `amnesia`, `status`. All over the shell's IPC
   (`omarchy-shell squigglebot ...`), so hooks/scripts/agents can drive him.
-- **The chat window** (`squigglebot chat`, double-click, the ⧉ button on his
-  bubble, or Ctrl+Return): a conventional LLM chat with the full history,
-  clickable document links, and the channel picker. It remembers its size
-  and position. While it's open, replies land there instead of bubbles.
+- **Break out to a terminal** (`squigglebot chat`, double-click, the ⧉ button
+  on his bubble, or Ctrl+Return): a floating terminal opens running the
+  agent's own interactive CLI (`codex resume` / `claude --resume`) on the
+  **same conversation** the bubble uses — the full thread is right there,
+  and anything you say in the terminal he remembers in the bubble. One window
+  per channel; opening again focuses it. `/chat window` switches back to the
+  built-in chat window (full history, doc links, channel picker), which is
+  also the automatic fallback for agents without resumable sessions.
 
 What you send goes to the omarchy default agent (`omarchy default agent`;
 codex, claude, opencode, crush, pi run headlessly) via `bin/squigglebot-agent`
 with an editable persona prompt (`~/.config/squigglebot/agent-prompt.md`).
-It answers as squiggle in strict JSON — reply text (with **bold**/*italic*/
+With codex or claude each channel is **one persistent agent session**: the
+first message opens it with the persona and channel memory, later messages
+resume it with just the message (faster, cheaper, and the thread itself is
+the context). Bubble messages carry a `[squiggle-bridge]` marker so the agent
+answers those in JSON and terminal messages in prose.
+
+For bubble messages it answers as squiggle in strict JSON — reply text (with **bold**/*italic*/
 __underline__ markdown), an after-animation or held emotion, bubble seconds —
 and he performs it, visibly mulling (thinking/curious/listening rotation)
 while the agent works. Messages queue and run serially; queued replies show
@@ -84,8 +94,8 @@ compactness. Delete via a chip's hover-×, `/drop`, or `squigglebot channel
 rm <name>`; `squigglebot amnesia [name|all]` wipes memory.
 
 **Slash commands** (either input, handled locally): `/help /channels /join
-/drop /amnesia /model /thinking /mode /agent /emotion /play /sleep /wake
-/doc /status /hush`. `/model`, `/thinking`, `/agent`, `/mode` persist to the
+/drop /amnesia /model /thinking /mode /agent /chat /emotion /play /sleep /wake
+/doc /status /hush`. `/model`, `/thinking`, `/agent`, `/mode`, `/chat` persist to the
 config and steer the agent CLI.
 
 ## Personality
@@ -106,7 +116,8 @@ announce theme switches and fret about low battery.
   `interactive`, `sleepAfter`, `fidgets`, `idleFps`, `busyFps`,
   `pokeAnimation`, `bubbleColor`, `bubbleTextColor`, `eyes`.
 - **Agent tuning**: `~/.config/squigglebot/config.json` (`agentMode`,
-  `agentModel`, `agentThinking`, `agentCli`) — or the slash commands.
+  `agentModel`, `agentThinking`, `agentCli`, `chatMode` terminal|window) —
+  or the slash commands (`/mode`, `/model`, `/thinking`, `/agent`, `/chat`).
 - **Persona**: `~/.config/squigglebot/agent-prompt.md`.
 
 ## Development

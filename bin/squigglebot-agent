@@ -1,16 +1,28 @@
 #!/usr/bin/env bash
-# Run the user's omarchy default coding agent headlessly with the squigglebot
-# reply prompt, and emit the agent's JSON reply on stdout.
+# Run the user's omarchy default coding agent with the squigglebot reply
+# prompt, and emit the agent's JSON reply on stdout.
+#
+# Sessions: with codex or claude, each channel is ONE persistent agent
+# conversation. The first message opens it with the full persona + memory
+# prompt; later messages resume it with just the message (the thread itself
+# is the context). `squigglebot-chat` opens that same thread interactively in
+# a terminal, so the bubble and the terminal are two views of one
+# conversation. Other agents fall back to stateless one-shot runs.
 #
 # Memory (Hermes-style, per channel under ~/.local/state/squigglebot/channels/):
 #   MEMORY.md    — durable facts, curated by the agent itself (always in prompt)
 #   history.log  — full append-only transcript (agent greps it on demand)
 #   summary.txt  — rolling summary of everything older than the recent tail
-#                  (the prompt gets summary + last 16 lines; compaction runs
-#                  in the background past ~20 uncompacted exchanges)
+#                  (seeds a fresh session; compaction runs in the background
+#                  past ~20 uncompacted exchanges)
+#   session.<agent> — the agent's session id for this channel's thread
 #
 # Usage: squigglebot-agent [--channel <name>] <message>
 #        squigglebot-agent [--channel <name>] --compact
+#        squigglebot-agent [--channel <name>] --interactive-argv
+#            ensure the channel's thread exists, then print the argv (one
+#            element per line) that resumes it interactively; exit 3 if the
+#            agent has no session support
 set -uo pipefail
 
 confdir="${XDG_CONFIG_HOME:-$HOME/.config}/squigglebot"
@@ -44,36 +56,75 @@ memfile="$chdir/MEMORY.md"
 touch "$log"
 
 # Agent tuning from squigglebot's config: which CLI (default: omarchy's
-# default agent), which model, reasoning effort, and agentMode:
+# default agent; SQUIGGLE_AGENT overrides for testing), which model,
+# reasoning effort, and agentMode:
 #   read  — read-only (agent default sandbox)
 #   write — can edit files / run commands, sandboxed (default)
 #   full  — no sandbox, no approvals; his hands are fully yours
 cfgjson="$confdir/config.json"
-agent="$(jq -r '.agentCli // empty' "$cfgjson" 2>/dev/null || true)"
+agent="${SQUIGGLE_AGENT:-}"
+[[ -n $agent ]] || agent="$(jq -r '.agentCli // empty' "$cfgjson" 2>/dev/null || true)"
 [[ -n $agent ]] || agent="$(cat "$HOME/.config/omarchy/defaults/agent" 2>/dev/null || true)"
 mode="$(jq -r '.agentMode // "write"' "$cfgjson" 2>/dev/null || echo write)"
 model="$(jq -r '.agentModel // empty' "$cfgjson" 2>/dev/null || true)"
 thinking="$(jq -r '.agentThinking // empty' "$cfgjson" 2>/dev/null || true)"
 
-run_agent() { # $1 = prompt
-  local flags=()
+sessfile="$chdir/session.$agent"
+newsidf="$chdir/.newsid"
+bridge="[squiggle-bridge]"
+
+sessions_supported() { [[ $agent == codex || $agent == claude ]]; }
+
+new_uuid() { uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid; }
+
+# Flags shared by every way of running the agent (one-shot, resume, and the
+# interactive terminal), so the terminal gets the same sandbox and model as
+# the bubble. codex's sandbox goes through -c: `exec resume` has no -s.
+agent_flags() {
+  flags=()
   case "$agent" in
   codex)
     case "$mode" in
-    write) flags=(-s workspace-write) ;;
-    full) flags=(--dangerously-bypass-approvals-and-sandbox) ;;
+    write) flags+=(-c 'sandbox_mode="workspace-write"') ;;
+    full) flags+=(--dangerously-bypass-approvals-and-sandbox) ;;
     esac
     [[ -n $model ]] && flags+=(-m "$model")
     [[ -n $thinking ]] && flags+=(-c "model_reasoning_effort=\"$thinking\"")
-    timeout 290 codex exec --skip-git-repo-check "${flags[@]}" "$1" </dev/null 2>/dev/null
     ;;
   claude)
     case "$mode" in
-    write) flags=(--permission-mode acceptEdits) ;;
-    full) flags=(--dangerously-skip-permissions) ;;
+    write) flags+=(--permission-mode acceptEdits) ;;
+    full) flags+=(--dangerously-skip-permissions) ;;
     esac
     [[ -n $model ]] && flags+=(--model "$model")
-    timeout 290 claude -p "${flags[@]}" "$1" </dev/null 2>/dev/null
+    ;;
+  esac
+}
+
+# Open a new thread with $1 as its first message. Records the new session id
+# in $newsidf (empty when the agent keeps no sessions or the run failed).
+run_fresh() {
+  : >"$newsidf"
+  agent_flags
+  case "$agent" in
+  codex)
+    local err rc sid
+    err="$(mktemp)"
+    timeout 290 codex exec --skip-git-repo-check "${flags[@]}" "$1" </dev/null 2>"$err"
+    rc=$?
+    # The banner on stderr carries "session id: <uuid>".
+    sid="$(grep -oE 'session id: [0-9a-fA-F-]+' "$err" | head -1 | awk '{print $3}')"
+    rm -f "$err"
+    ((rc == 0)) && printf '%s' "$sid" >"$newsidf"
+    return $rc
+    ;;
+  claude)
+    local sid rc
+    sid="$(new_uuid)"
+    timeout 290 claude -p --session-id "$sid" "${flags[@]}" "$1" </dev/null 2>/dev/null
+    rc=$?
+    ((rc == 0)) && printf '%s' "$sid" >"$newsidf"
+    return $rc
     ;;
   opencode) timeout 290 opencode run "$1" </dev/null 2>/dev/null ;;
   crush)
@@ -88,7 +139,112 @@ run_agent() { # $1 = prompt
   esac
 }
 
+# Continue thread $1 with message $2.
+run_resume() {
+  agent_flags
+  case "$agent" in
+  codex) timeout 290 codex exec resume --skip-git-repo-check "${flags[@]}" "$1" "$2" </dev/null 2>/dev/null ;;
+  claude) timeout 290 claude -p --resume "$1" "${flags[@]}" "$2" </dev/null 2>/dev/null ;;
+  *) return 1 ;;
+  esac
+}
+
+# A throwaway run that must not become (or touch) the channel's thread —
+# memory compaction. codex can skip persisting; claude leaves a stray
+# session behind, which is harmless.
+run_oneshot() {
+  agent_flags
+  case "$agent" in
+  codex) timeout 290 codex exec --skip-git-repo-check --ephemeral "${flags[@]}" "$1" </dev/null 2>/dev/null ;;
+  claude) timeout 290 claude -p "${flags[@]}" "$1" </dev/null 2>/dev/null ;;
+  *) run_fresh "$1" ;;
+  esac
+}
+
 flat() { printf '%s' "$1" | tr '\n' ' ' | cut -c1-600; }
+
+# The full opening prompt: persona, docs dir, memory, and the first message.
+build_full_prompt() { # $1 = message
+  local promptfile memory recent
+  promptfile="$confdir/agent-prompt.md"
+  [[ -f $promptfile ]] || promptfile="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/prompts/agent-prompt.md"
+
+  memory="Channel: #$channel — this conversation thread is scoped to it.
+Your durable memory file for this channel is $memfile — read it below, and
+UPDATE THE FILE YOURSELF when you learn a lasting fact worth keeping (short
+markdown bullets; prune stale ones). Your full channel history is $log —
+grep it when asked about older specifics that aren't in view.
+
+"
+  if [[ -s $memfile ]]; then
+    memory+="Channel memory (durable facts):
+$(cat "$memfile")
+
+"
+  fi
+  if [[ -s $summary ]]; then
+    memory+="Summary of older conversation:
+$(cat "$summary")
+
+"
+  fi
+  recent="$(tail -n 16 "$log")"
+  if [[ -n $recent ]]; then
+    memory+="Recent exchanges (oldest first):
+$recent
+
+"
+  fi
+
+  printf '%s\n\nSave any HTML document under: %s/\nCurrent local time: %s\n\n%s%s User message:\n%s' \
+    "$(cat "$promptfile")" "$docsdir" "$(date '+%A %Y-%m-%d %H:%M')" "$memory" "$bridge" "$1"
+}
+
+# The follow-up prompt for a live thread: just the message, marked as coming
+# through the bubble so the JSON contract applies.
+build_slim_prompt() { # $1 = message
+  printf '%s Current local time: %s\nUser message (via the bubble — reply with the single-line JSON object as always):\n%s' \
+    "$bridge" "$(date '+%A %Y-%m-%d %H:%M')" "$1"
+}
+
+# Send a message on the channel's thread, opening it if needed; the raw agent
+# output lands in $out. Falls back to a fresh thread when a resume yields
+# nothing (deleted/archived/expired session).
+converse() { # $1 = message
+  local sid=""
+  out=""
+  sessions_supported && sid="$(cat "$sessfile" 2>/dev/null || true)"
+  if [[ -n $sid ]]; then
+    out="$(cd "$HOME" && run_resume "$sid" "$(build_slim_prompt "$1")")" || out=""
+    [[ -n $out ]] || { rm -f "$sessfile"; sid=""; }
+  fi
+  if [[ -z $sid ]]; then
+    out="$(cd "$HOME" && run_fresh "$(build_full_prompt "$1")")" || true
+    if sessions_supported && [[ -s $newsidf ]]; then
+      cp "$newsidf" "$sessfile"
+    fi
+    rm -f "$newsidf"
+  fi
+}
+
+# --- interactive handoff: print the argv that resumes the thread ------------
+if [[ ${1:-} == "--interactive-argv" ]]; then
+  sessions_supported || { echo "squigglebot-agent: '$agent' has no resumable sessions" >&2; exit 3; }
+  sid="$(cat "$sessfile" 2>/dev/null || true)"
+  if [[ -z $sid ]]; then
+    # No thread yet: open one with a bootstrap message so the persona is in
+    # the conversation before the terminal takes over.
+    converse "The user just opened this channel's chat in a terminal window. Greet them in one short line."
+    sid="$(cat "$sessfile" 2>/dev/null || true)"
+    [[ -n $sid ]] || { echo "squigglebot-agent: could not open a $agent session" >&2; exit 2; }
+  fi
+  agent_flags
+  case "$agent" in
+  codex) printf '%s\n' codex resume "${flags[@]}" "$sid" ;;
+  claude) printf '%s\n' claude --resume "$sid" "${flags[@]}" ;;
+  esac
+  exit 0
+fi
 
 # --- background memory compaction: fold older lines into the summary --------
 # The full history.log is never truncated; .summarized tracks how many lines
@@ -113,7 +269,7 @@ $(cat "$summary" 2>/dev/null)
 
 Older conversation:
 $old"
-  newsum="$(cd "$HOME" && run_agent "$cprompt")" || exit 0
+  newsum="$(cd "$HOME" && run_oneshot "$cprompt")" || exit 0
   newsum="$(printf '%s' "$newsum" | tr -d '\r' | sed -e 's/^[[:space:]]*//' | head -c 2000)"
   [[ -n $newsum ]] || exit 0
   printf '%s\n' "$newsum" >"$summary.tmp" && mv "$summary.tmp" "$summary"
@@ -128,45 +284,7 @@ msg="${1:-$(cat)}"
 # Prune long-form docs older than a week.
 find "$docsdir" -maxdepth 1 -name '*.html' -mtime +7 -delete 2>/dev/null
 
-promptfile="$confdir/agent-prompt.md"
-[[ -f $promptfile ]] || promptfile="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/prompts/agent-prompt.md"
-
-memory="Channel: #$channel — this conversation thread is scoped to it.
-Your durable memory file for this channel is $memfile — read it below, and
-UPDATE THE FILE YOURSELF when you learn a lasting fact worth keeping (short
-markdown bullets; prune stale ones). Your full channel history is $log —
-grep it when asked about older specifics that aren't in view.
-
-"
-if [[ -s $memfile ]]; then
-  memory+="Channel memory (durable facts):
-$(cat "$memfile")
-
-"
-fi
-if [[ -s $summary ]]; then
-  memory+="Summary of older conversation:
-$(cat "$summary")
-
-"
-fi
-recent="$(tail -n 16 "$log")"
-if [[ -n $recent ]]; then
-  memory+="Recent exchanges (oldest first):
-$recent
-
-"
-fi
-
-prompt="$(cat "$promptfile")
-
-Save any HTML document under: $docsdir/
-Current local time: $(date '+%A %Y-%m-%d %H:%M')
-
-${memory}User message:
-$msg"
-
-out="$(cd "$HOME" && run_agent "$prompt")" || true
+converse "$msg"
 
 # The reply schema is a flat, single-line JSON object; take the last one in
 # the output so agent preamble/log noise doesn't matter.
