@@ -143,6 +143,7 @@ release)
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.05
   done
+  omarchy-shell -q squigglebot voiceTranscribing >/dev/null 2>&1 || true
 
   # voxtype prints progress banners on stdout even in quiet mode; only the
   # transcript survives the filter. The busy marker lets `cancel` reach this
@@ -153,7 +154,6 @@ release)
     | grep -vE '^(Loading audio file|Audio format:|Processing )' \
     | tr '\n' ' ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   rm -f "$dir/rec.wav" "$dir/busy"
-  omarchy-shell -q squigglebot voiceStop >/dev/null 2>&1 || true
   log "transcript: ${text:0:80}"
 
   if [[ -f "$dir/cancelled" ]]; then
@@ -163,10 +163,11 @@ release)
   fi
 
   if [[ -z $text ]]; then
+    omarchy-shell -q squigglebot voiceStop >/dev/null 2>&1 || true
     squigglebot say "...I didn't catch that." 5 sad >/dev/null 2>&1
   else
-    squigglebot play thinking >/dev/null 2>&1 || true
-    squigglebot tell "$text" >/dev/null 2>&1
+    # Echoed in the input box for a few seconds and sent to the agent.
+    omarchy-shell -q squigglebot voiceHeard "$text" >/dev/null 2>&1 || true
   fi
   ;;
 

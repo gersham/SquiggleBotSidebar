@@ -192,7 +192,8 @@ BarWidget {
   readonly property real sleepAfterS: setting("sleepAfter", 60)
   readonly property bool asleep: currentAnim === "sleeping" || currentAnim === "dozing"
   readonly property bool busyTalking: saying
-    || (chatHost.item && (chatHost.item.hearing || chatHost.item.pondering || chatHost.item.chatOpen))
+    || voiceMode
+    || (chatHost.item && (chatHost.item.hearing || chatHost.item.pondering || chatHost.item.chatOpen || chatHost.item.voiceUp))
 
   Timer {
     id: sleepTimer
@@ -365,36 +366,48 @@ BarWidget {
     onTriggered: root.tick()
   }
 
-  // ------------------------------------------------------------ voice wave
-  // While voice is being recorded/transcribed the mascot is replaced by an
-  // animating waveform driven by live mic levels from squigglebot-voice.
+  // ------------------------------------------------------------ voice mode
+  // squigglebot-voice drives recording/transcription over IPC. The visual
+  // surface is the input box (ChatHost: live waveform, "transcribing…", then
+  // the transcript); the mascot just listens. voiceMode tracks "a take is in
+  // flight" for click-to-cancel and the sleep/fidget gates.
   property bool voiceMode: false
-  property var voiceLevels: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
 
   function voiceBegin() {
-    voiceLevels = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
     voiceMode = true
     activity()
+    if (chatHost.item) chatHost.item.voiceBegin()
+    if (!root.saying) play("listening")
   }
 
   function voicePush(v) {
-    var level = Math.min(1, Math.max(0, Number(v) || 0))
-    var next = voiceLevels.slice(1)
-    next.push(level)
-    voiceLevels = next
+    if (chatHost.item) chatHost.item.voicePush(v)
+  }
+
+  function voiceTranscribing() {
+    if (chatHost.item) chatHost.item.voiceTranscribing()
+    if (!root.saying) play("thinking")
+  }
+
+  // The transcript arrived: ChatHost echoes it in the box and sends it.
+  function voiceHeard(text) {
+    voiceMode = false
+    if (chatHost.item) chatHost.item.voiceHeard(text)
   }
 
   function voiceEnd() {
     voiceMode = false
+    if (chatHost.item) chatHost.item.voiceStopped()
+    if (!root.saying && !(chatHost.item && chatHost.item.pondering)) rest()
   }
 
-  // Click-to-cancel: a click on the mascot (or the waveform standing in for
-  // him) aborts whatever is mid-flight — a voice recording/transcription, or
-  // an open input bubble. Returns true when something was cancelled, so
-  // callers can fall through to their normal click action otherwise. The
-  // recording is owned by squigglebot-voice, not the widget, so the abort
-  // goes through the script's own cancel verb; resolved relative to this
-  // file so the plugin needs no PATH assumptions.
+  // Click-to-cancel: a click on the mascot aborts whatever is mid-flight — a
+  // voice recording/transcription, an open input bubble, or a transcript
+  // echo. Returns true when something was cancelled, so callers can fall
+  // through to their normal click action otherwise. The recording is owned
+  // by squigglebot-voice, not the widget, so the abort goes through the
+  // script's own cancel verb; resolved relative to this file so the plugin
+  // needs no PATH assumptions.
   readonly property string voiceScript: Qt.resolvedUrl("bin/squigglebot-voice").toString().replace(/^file:\/\//, "")
 
   Process {
@@ -412,53 +425,14 @@ BarWidget {
       chatHost.item.closeInput(false)
       return true
     }
+    if (chatHost.item && chatHost.item.voiceUp) {
+      chatHost.item.voiceEnd()
+      return true
+    }
     return false
   }
 
-  // With no fresh levels (the transcription phase) the bars decay to a calm
-  // shimmer instead of freezing.
-  Timer {
-    interval: 120
-    repeat: true
-    running: root.voiceMode
-    onTriggered: {
-      var next = []
-      for (var i = 0; i < root.voiceLevels.length; i++) {
-        next.push(Math.max(0.06, root.voiceLevels[i] * 0.82))
-      }
-      root.voiceLevels = next
-    }
-  }
-
-  Row {
-    visible: root.voiceMode
-    anchors.centerIn: parent
-    spacing: Math.max(2, Math.round(root.drawWidth * 0.05))
-    height: Math.round(root.drawHeight * 0.8)
-
-    Repeater {
-      model: root.voiceLevels.length
-
-      Rectangle {
-        required property int index
-        readonly property real level: root.voiceLevels[index] || 0
-        width: Math.max(2, Math.round(root.drawWidth * 0.055))
-        radius: width / 2
-        anchors.verticalCenter: parent.verticalCenter
-        height: Math.max(3, parent.height * (0.08 + level * 0.92))
-        color: root.bodyHex
-
-        Behavior on height {
-          NumberAnimation {
-            duration: 90
-          }
-        }
-      }
-    }
-  }
-
   Mascot {
-    visible: !root.voiceMode
     anchors.centerIn: parent
     width: Math.round(root.drawWidth)
     height: Math.round(root.drawHeight)
@@ -713,6 +687,18 @@ BarWidget {
 
     function voiceStop(): string {
       root.relay("voiceEnd")
+      return "ok"
+    }
+
+    // Recording stopped, voxtype is working on it.
+    function voiceTranscribing(): string {
+      root.relay("voiceTranscribing")
+      return "ok"
+    }
+
+    // The transcript: echoed in the input box and sent to the agent.
+    function voiceHeard(text: string): string {
+      root.relay("voiceHeard", [text])
       return "ok"
     }
 

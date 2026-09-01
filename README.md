@@ -43,9 +43,11 @@ axis (top / middle / bottom), and a clock sits at the foot.
   press`/`release` bound in `~/.config/hypr/bindings.lua`): **tap** opens a
   keyboard input bubble beside him on keyup — type, **Return** sends,
   **Shift+Return** newline, **Ctrl+Return** sends and opens the terminal chat,
-  **Esc** cancels; tapping again dismisses. **Hold** to talk: recording
-  starts on keydown, the bar mascot becomes a live waveform of your mic,
-  and releasing transcribes with voxtype and sends the text as if typed.
+  **Esc** cancels; tapping again dismisses. **Hold** to talk (or double-tap on
+  the AI key): recording starts on keydown and the input box appears with a
+  live waveform of your mic; releasing transcribes with voxtype (the box
+  shows "transcribing…"), then the transcript is shown in the box for a few
+  seconds — already sent to the agent — so you can see what he heard.
 - **Click him**: same input bubble. **Double-click**: the terminal chat.
 - **CLI**: `squigglebot tell "..."` — plus `say`, `hush`, `ask`, `summon`,
   `chat`, `channel`, `heard`, `emotion`, `play`, `poke`, `sleep`, `wake`,

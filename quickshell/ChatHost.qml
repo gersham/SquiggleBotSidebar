@@ -393,6 +393,100 @@ Item {
     // ---------------------------------------------------------- input bubble
     property bool hearing: false
 
+    // ------------------------------------------------------------ voice mode
+    // squigglebot-voice drives these through the widget's IPC. The input box
+    // doubles as the voice surface: a live waveform while recording, a calm
+    // shimmer plus "transcribing…" while voxtype works on the take, then the
+    // transcript itself for a few seconds — already sent to the agent — so
+    // you can see what you said. Phases: "" | recording | transcribing | echo.
+    property string voicePhase: ""
+    readonly property bool voiceUp: voicePhase !== ""
+    readonly property int voiceBars: 24
+    property var voiceLevels: []
+    property string voiceText: ""
+
+    function voiceReset() {
+        const l = []
+        for (let i = 0; i < voiceBars; i++) l.push(0.08)
+        voiceLevels = l
+    }
+
+    function voiceBegin() {
+        echoTimer.stop()
+        if (host && host.anchorRectNow) anchorRect = host.anchorRectNow()
+        voiceReset()
+        voiceText = ""
+        inputField.text = ""
+        inputWin.expanded = false
+        voicePhase = "recording"
+    }
+
+    function voicePush(v) {
+        const level = Math.min(1, Math.max(0, Number(v) || 0))
+        voiceLevels = voiceLevels.slice(1).concat([level])
+    }
+
+    function voiceTranscribing() {
+        if (voicePhase === "") voiceBegin()
+        voicePhase = "transcribing"
+    }
+
+    // The transcript: shown in the box, sent right away, dismissed after a
+    // reading-length timeout.
+    function voiceHeard(text) {
+        const t = String(text || "").trim()
+        if (!t) {
+            voiceEnd()
+            return
+        }
+        if (voicePhase === "") voiceBegin()
+        voiceText = t
+        inputField.text = t
+        voicePhase = "echo"
+        echoTimer.interval = Math.min(9000, Math.max(3000, 1800 + 45 * t.length))
+        echoTimer.restart()
+        sendUserText(t)
+    }
+
+    // The script's voiceStop: the take is over (cancelled, or nothing heard).
+    // An echo already showing stays until its timer.
+    function voiceStopped() {
+        if (voicePhase !== "echo") voiceEnd()
+    }
+
+    function voiceEnd() {
+        echoTimer.stop()
+        voicePhase = ""
+        voiceText = ""
+        if (!hearing) inputField.text = ""
+    }
+
+    Timer {
+        id: echoTimer
+        onTriggered: root.voiceEnd()
+    }
+
+    // With no fresh levels (transcribing) the bars decay to a calm shimmer.
+    Timer {
+        interval: 120
+        repeat: true
+        running: root.voicePhase === "recording" || root.voicePhase === "transcribing"
+        onTriggered: root.voiceLevels = root.voiceLevels.map(l => Math.max(0.06, l * 0.82))
+    }
+
+    // The box's ✕ means different things per state.
+    function dismissInput() {
+        if (hearing) {
+            closeInput(false)
+            return
+        }
+        if (voicePhase === "echo") {
+            voiceEnd()
+            return
+        }
+        if (voiceUp && host) host.cancelInProgress()
+    }
+
     // TEMP diagnostic: raw key press/release timing seen by the focused
     // input field, for probing what the NuPhy AI key actually emits.
     property var keyEvents: []
@@ -409,6 +503,7 @@ Item {
     }
 
     function openInput() {
+        voiceEnd()
         if (chatOpen) {
             chatInput.forceActiveFocus()
             return
@@ -473,7 +568,7 @@ Item {
 
     PanelWindow {
         id: inputWin
-        visible: root.hearing && !root.chatOpen
+        visible: (root.hearing || root.voiceUp) && !root.chatOpen
         color: "transparent"
         // Ignore, not a zero zone: margins below are computed in absolute
         // screen coordinates from the mascot's anchorRect, but a zero-zone
@@ -484,8 +579,9 @@ Item {
 
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "squigglebot-input"
-        WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-        onVisibleChanged: if (visible) inputField.forceActiveFocus()
+        // Only typing grabs the keyboard; the voice phases just display.
+        WlrLayershell.keyboardFocus: visible && root.hearing ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        onVisibleChanged: if (visible && root.hearing) inputField.forceActiveFocus()
 
         readonly property var a: root.anchorRect || null
         readonly property real refH: a ? a.h : 130
@@ -608,7 +704,7 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.closeInput(false)
+                    onClicked: root.dismissInput()
                 }
             }
 
@@ -638,6 +734,7 @@ Item {
                     color: root.host ? root.host.fgHex : "#d2d0c8"
                     selectionColor: inputRect.border.color
                     cursorVisible: root.hearing
+                    readOnly: root.voicePhase !== ""
                     focus: true
 
                     onTextChanged: {
@@ -671,6 +768,50 @@ Item {
                     Keys.onEnterPressed: event => root.closeInput(true)
                     Keys.onEscapePressed: event => root.closeInput(false)
                 }
+            }
+
+            // Voice: the waveform lives here, in the box, not over the mascot.
+            Row {
+                id: voiceWave
+                visible: root.voicePhase === "recording" || root.voicePhase === "transcribing"
+                x: inputWin.padH
+                anchors.verticalCenter: parent.verticalCenter
+                height: Math.round(parent.height * 0.6)
+                spacing: 3
+                readonly property real barW: Math.max(3, Math.min(10, Math.floor(
+                    (inputCloseBtn.x - inputWin.padH * 2 - transcribingLabel.width - spacing * root.voiceBars) / root.voiceBars)))
+
+                Repeater {
+                    model: root.voiceBars
+
+                    Rectangle {
+                        required property int index
+                        readonly property real level: root.voiceLevels[index] || 0
+                        width: voiceWave.barW
+                        radius: width / 2
+                        anchors.verticalCenter: parent.verticalCenter
+                        height: Math.max(3, voiceWave.height * (0.08 + level * 0.92))
+                        color: inputRect.border.color
+
+                        Behavior on height {
+                            NumberAnimation { duration: 90 }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                id: transcribingLabel
+                visible: root.voicePhase === "transcribing"
+                width: visible ? implicitWidth : 0
+                anchors.right: inputCloseBtn.left
+                anchors.rightMargin: inputWin.padH * 0.6
+                anchors.verticalCenter: parent.verticalCenter
+                text: "transcribing…"
+                font.pixelSize: Math.max(11, inputWin.fontPx * 0.6)
+                font.italic: true
+                color: inputRect.border.color
+                opacity: 0.85
             }
         }
     }
