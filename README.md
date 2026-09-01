@@ -118,6 +118,9 @@ announce theme switches and fret about low battery.
 - **Agent tuning**: `~/.config/squigglebot/config.json` (`agentMode`,
   `agentModel`, `agentThinking`, `agentCli`, `chatMode` terminal|window) —
   or the slash commands (`/mode`, `/model`, `/thinking`, `/agent`, `/chat`).
+  Shipped default (`config.default.json`): codex on `gpt-5.6-luna` at
+  reasoning effort `high`; `/model clear` / `/thinking clear` fall back to
+  the agent CLI's own defaults.
 - **Persona**: `~/.config/squigglebot/agent-prompt.md`.
 
 ## Development
