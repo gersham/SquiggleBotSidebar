@@ -41,6 +41,10 @@ hold_ms=550
 hold_s=0.55
 
 start_rec() {
+  # A fresh recorder starts a new gesture. The marker is set only after the
+  # second tap has committed to voice, so a later short release can distinguish
+  # "end the voice take" from an ordinary tap.
+  rm -f "$dir/voice-take"
   pw-record --rate 16000 --channels 1 --format s16 "$dir/rec.wav" >/dev/null 2>&1 &
   local rec=$!
   echo "$rec" >"$dir/pid"
@@ -106,18 +110,27 @@ release)
     log "gated tap: $action"
     exit 0
   fi
-  [[ -f "$dir/pid" ]] || { log "release: no recording"; exit 0; }
+  [[ -f "$dir/pid" ]] || { rm -f "$dir/voice-take"; log "release: no recording"; exit 0; }
   pid="$(cat "$dir/pid")"
+  voice_take=false
+  if [[ -f "$dir/voice-take" ]]; then
+    # The Copilot key emits a short synthetic release even when held. Once a
+    # double tap has promoted the take to voice, the next release is its stop
+    # event regardless of that reported duration.
+    voice_take=true
+    rm -f "$dir/voice-take"
+  fi
   t0="$(cat "$dir/t0" 2>/dev/null || echo 0)"
   now="$(date +%s%3N)"
   dur=$((now - t0))
   log "release: dur=${dur}ms"
 
-  if ((dur < hold_ms)); then
+  if [[ "$voice_take" != true ]] && ((dur < hold_ms)); then
     if [[ -f "$dir/tap1" ]]; then
       # Double tap: voice. Keep this tap's recording running; the waveform
       # arrives via start_rec's delayed subshell.
       rm -f "$dir/tap1"
+      touch "$dir/voice-take"
       log "double-tap: voice"
       omarchy-shell -q squigglebot play listening >/dev/null 2>&1 || true
       exit 0
@@ -172,7 +185,7 @@ release)
   ;;
 
 cancel)
-  rm -f "$dir/tap1" "$dir/gated" "$dir/pressing"
+  rm -f "$dir/tap1" "$dir/gated" "$dir/pressing" "$dir/voice-take"
   if [[ -f "$dir/pid" ]]; then
     pid="$(cat "$dir/pid")"
     stop_rec "$pid"
