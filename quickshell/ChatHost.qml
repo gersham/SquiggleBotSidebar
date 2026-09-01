@@ -492,12 +492,17 @@ Item {
         readonly property real labelH: channelShown ? Math.max(16, fontPx * 0.9) : 0
         readonly property real boxH: Math.ceil(Math.max(refH * 0.5,
             Math.min(inputField.implicitHeight, maxViewH) + padV * 2))
+        // Sharp (unblurred) black drop shadow behind the box and label, so
+        // the accent outline reads on light backgrounds. The window is grown
+        // by the offset; the box keeps its position and the shadow fills the
+        // extra right/bottom sliver.
+        readonly property real shadowOff: 3
         implicitWidth: {
             const sw = screen ? screen.width : 3200
-            if (expanded) return Math.round(sw * 0.5)
-            return Math.round(Math.min(sw * 0.2, Math.max(380, refH * 2.8)))
+            if (expanded) return Math.round(sw * 0.5) + shadowOff
+            return Math.round(Math.min(sw * 0.2, Math.max(380, refH * 2.8))) + shadowOff
         }
-        implicitHeight: Math.ceil(boxH + labelH)
+        implicitHeight: Math.ceil(boxH + labelH + shadowOff)
 
         anchors {
             top: true
@@ -520,7 +525,18 @@ Item {
         }
 
         // The channel, outside and above the box; #general stays unlabelled.
+        // Its shadow is a black twin offset behind it — sharp, no blur.
         Text {
+            visible: channelLabel.visible
+            x: channelLabel.x + 2
+            y: channelLabel.y + 2
+            text: channelLabel.text
+            font: channelLabel.font
+            color: "#000000"
+        }
+
+        Text {
+            id: channelLabel
             visible: inputWin.channelShown
             anchors.left: parent.left
             anchors.leftMargin: inputRect.radius
@@ -532,11 +548,24 @@ Item {
             color: inputRect.border.color
         }
 
+        // The box's shadow: same rounded shape, shifted down-right, hard edge.
+        Rectangle {
+            anchors.fill: inputRect
+            anchors.leftMargin: inputWin.shadowOff
+            anchors.topMargin: inputWin.shadowOff
+            anchors.rightMargin: -inputWin.shadowOff
+            anchors.bottomMargin: -inputWin.shadowOff
+            radius: inputRect.radius
+            color: "#000000"
+        }
+
         Rectangle {
             id: inputRect
             anchors.left: parent.left
             anchors.right: parent.right
+            anchors.rightMargin: inputWin.shadowOff
             anchors.bottom: parent.bottom
+            anchors.bottomMargin: inputWin.shadowOff
             height: inputWin.boxH
             radius: Math.min(14, height * 0.28)
             color: "#000000"

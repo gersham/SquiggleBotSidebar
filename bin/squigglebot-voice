@@ -32,6 +32,14 @@ level_loop() {
   done
 }
 
+# Tap vs hold: a press shorter than this is a tap (summon/double-tap logic);
+# holding past it is push-to-talk. Recording still starts at keydown (0ms) so
+# a real hold loses no audio — this only decides how the release is read, and
+# when the waveform is allowed to appear. Was 350ms; unhurried taps overshot
+# that and got misread as holds.
+hold_ms=550
+hold_s=0.55
+
 start_rec() {
   date +%s%3N >"$dir/t0"
   pw-record --rate 16000 --channels 1 --format s16 "$dir/rec.wav" >/dev/null 2>&1 &
@@ -40,7 +48,7 @@ start_rec() {
   log "recording $rec"
   # The waveform only appears once this is clearly a voice take, not a tap.
   (
-    sleep 0.35
+    sleep "$hold_s"
     if [[ -f "$dir/pid" ]] && kill -0 "$rec" 2>/dev/null; then
       omarchy-shell -q squigglebot voiceStart >/dev/null 2>&1 || true
       level_loop "$rec"
@@ -90,7 +98,7 @@ release)
   dur=$((now - t0))
   log "release: dur=${dur}ms"
 
-  if ((dur < 350)); then
+  if ((dur < hold_ms)); then
     if [[ -f "$dir/tap1" ]]; then
       # Double tap: voice. Keep this tap's recording running; the waveform
       # arrives via start_rec's delayed subshell.
