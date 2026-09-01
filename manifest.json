@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "gersham.squigglebotsidebar",
+  "name": "SquiggleBotSidebar",
+  "version": "0.2.0",
+  "author": "Gersham Meharg",
+  "license": "MIT",
+  "description": "A total-conversion vertical sidebar headed by the squigglebot AI mascot (bundled: rendering, speech bubbles, voice, and the omarchy-agent chat all live in this plugin). Passes through to the built-in bar when the bar is horizontal.",
+  "kinds": [
+    "bar"
+  ],
+  "entryPoints": {
+    "bar": "Bar.qml"
+  }
+}

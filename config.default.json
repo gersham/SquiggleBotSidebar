@@ -1,0 +1,45 @@
+{
+  "animation": "idle",
+  "expression": "",
+  "shape": "round",
+  "renderMode": "projected-3d",
+  "bodyColor": "accent",
+  "eyeColor": "background",
+  "background": "transparent",
+  "shadow": false,
+  "mouth": true,
+  "mouseFollow": false,
+  "lookGain": 1.0,
+  "sleepAfter": 60,
+  "agentMode": "write",
+  "agentModel": "",
+  "agentThinking": "",
+  "agentCli": "",
+  "fidgets": true,
+  "workspaceGlance": true,
+  "returnToIdle": true,
+  "pokeAnimation": "surprised",
+  "fps": 30,
+  "idleFps": 12,
+  "eyes": {
+    "shape": "capsule",
+    "width": 23,
+    "height": 56,
+    "gap": 42,
+    "y": -10
+  },
+  "bubble": {
+    "color": "accent",
+    "textColor": "#000000"
+  },
+  "definitionFile": "",
+  "window": {
+    "width": 130,
+    "x": 32,
+    "y": 32,
+    "anchor": "bottom-right",
+    "layer": "top",
+    "monitor": "",
+    "clickThrough": false
+  }
+}

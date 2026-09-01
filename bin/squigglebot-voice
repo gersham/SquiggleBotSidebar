@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# Voice/summon entry for the squigglebot key, bound to press and release.
+#
+# The NuPhy AI key is a firmware macro: press+release arrive ~50ms apart no
+# matter how long the key is physically held, so "hold" does not exist on it.
+# Gestures:
+#   single tap   — input bubble (appears after a 450ms beat, on keyup);
+#                  tapping again just dismisses it
+#   double tap   — voice: recording starts immediately, the bar shows a live
+#                  waveform; the NEXT tap transcribes and sends
+#   real hold    — on keys that support it (not the AI key): classic
+#                  push-to-talk — record while held, send on release
+# Voice only arms from a quiet state: while the input bubble or chat window
+# is up, or squiggle is mid-say, a press is gated (widget voiceGate) and the
+# tap acts as a dismiss/summon toggle instead of push-to-talk.
+set -uo pipefail
+
+dir="${XDG_RUNTIME_DIR:-/tmp}/squigglebot-voice"
+mkdir -p "$dir"
+log() { printf '%s %s\n' "$(date +%s%3N)" "$*" >>"$dir/log"; }
+
+# Live mic level for the bar waveform: peak of the last ~0.15s of the growing
+# WAV, pushed to the widget while the recording is running.
+level_loop() {
+  local pid="$1"
+  while kill -0 "$pid" 2>/dev/null && [[ -f "$dir/pid" ]]; do
+    local lvl
+    lvl="$(tail -c 4800 "$dir/rec.wav" 2>/dev/null | od -An -vtd2 \
+      | awk '{for(i=1;i<=NF;i++){v=$i<0?-$i:$i;if(v>m)m=v}} END{if(m=="")m=0; printf "%.3f", m/32767}')"
+    omarchy-shell -q squigglebot voiceLevel "${lvl:-0}" >/dev/null 2>&1 || true
+    sleep 0.12
+  done
+}
+
+start_rec() {
+  date +%s%3N >"$dir/t0"
+  pw-record --rate 16000 --channels 1 --format s16 "$dir/rec.wav" >/dev/null 2>&1 &
+  local rec=$!
+  echo "$rec" >"$dir/pid"
+  log "recording $rec"
+  # The waveform only appears once this is clearly a voice take, not a tap.
+  (
+    sleep 0.35
+    if [[ -f "$dir/pid" ]] && kill -0 "$rec" 2>/dev/null; then
+      omarchy-shell -q squigglebot voiceStart >/dev/null 2>&1 || true
+      level_loop "$rec"
+    fi
+  ) &
+}
+
+stop_rec() { # $1 = pid
+  rm -f "$dir/pid"
+  kill -INT "$1" 2>/dev/null || true
+}
+
+case "${1:-}" in
+press)
+  if [[ -f "$dir/pid" ]] && kill -0 "$(cat "$dir/pid")" 2>/dev/null; then
+    log "press: already recording"
+    exit 0
+  fi
+  # Never arm a recording while the input bubble or chat window is up, or
+  # while squiggle is mid-say: a press there is the start of a dismiss tap,
+  # and recording on it is how a voice take used to appear right after
+  # closing the message box. The gated marker tells release to treat the
+  # tap as a plain summon toggle.
+  if [[ "$(omarchy-shell squigglebot voiceGate 2>/dev/null)" == "no" ]]; then
+    touch "$dir/gated"
+    log "press: gated (input/chat/bubble up)"
+    exit 0
+  fi
+  rm -f "$dir/gated"
+  start_rec
+  ;;
+
+release)
+  # A gated press recorded nothing: the tap is a plain dismiss/summon
+  # toggle, acted on immediately — no double-tap beat, since voice can't
+  # start from a gated state anyway.
+  if [[ -f "$dir/gated" ]]; then
+    rm -f "$dir/gated"
+    action="$(omarchy-shell squigglebot voiceSummon 2>/dev/null || echo closed)"
+    log "gated tap: $action"
+    exit 0
+  fi
+  [[ -f "$dir/pid" ]] || { log "release: no recording"; exit 0; }
+  pid="$(cat "$dir/pid")"
+  t0="$(cat "$dir/t0" 2>/dev/null || echo 0)"
+  now="$(date +%s%3N)"
+  dur=$((now - t0))
+  log "release: dur=${dur}ms"
+
+  if ((dur < 350)); then
+    if [[ -f "$dir/tap1" ]]; then
+      # Double tap: voice. Keep this tap's recording running; the waveform
+      # arrives via start_rec's delayed subshell.
+      rm -f "$dir/tap1"
+      log "double-tap: voice"
+      omarchy-shell -q squigglebot play listening >/dev/null 2>&1 || true
+      exit 0
+    fi
+    # First tap: discard this tap's recording and wait a beat — a second tap
+    # within the window means voice; otherwise run the normal summon.
+    stop_rec "$pid"
+    rm -f "$dir/rec.wav"
+    touch "$dir/tap1"
+    (
+      sleep 0.45
+      [[ -f "$dir/tap1" ]] || exit 0
+      rm -f "$dir/tap1"
+      action="$(omarchy-shell squigglebot voiceSummon 2>/dev/null || echo closed)"
+      log "tap: $action"
+    ) &
+    exit 0
+  fi
+
+  # Hold branch: a real held key, or the tap that ends a voice take.
+  stop_rec "$pid"
+  for _ in 1 2 3 4 5; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.05
+  done
+
+  # voxtype prints progress banners on stdout even in quiet mode; only the
+  # transcript survives the filter. The busy marker lets `cancel` reach this
+  # phase: the recorder pid is already gone, so cancel flags `cancelled` and
+  # the transcript is discarded below instead of sent.
+  touch "$dir/busy"
+  text="$(voxtype -q transcribe "$dir/rec.wav" 2>/dev/null \
+    | grep -vE '^(Loading audio file|Audio format:|Processing )' \
+    | tr '\n' ' ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  rm -f "$dir/rec.wav" "$dir/busy"
+  omarchy-shell -q squigglebot voiceStop >/dev/null 2>&1 || true
+  log "transcript: ${text:0:80}"
+
+  if [[ -f "$dir/cancelled" ]]; then
+    rm -f "$dir/cancelled"
+    log "transcript discarded (cancelled)"
+    exit 0
+  fi
+
+  if [[ -z $text ]]; then
+    squigglebot say "...I didn't catch that." 5 sad >/dev/null 2>&1
+  else
+    squigglebot play thinking >/dev/null 2>&1 || true
+    squigglebot tell "$text" >/dev/null 2>&1
+  fi
+  ;;
+
+cancel)
+  rm -f "$dir/tap1" "$dir/gated"
+  if [[ -f "$dir/pid" ]]; then
+    pid="$(cat "$dir/pid")"
+    stop_rec "$pid"
+    rm -f "$dir/rec.wav"
+    omarchy-shell -q squigglebot voiceStop >/dev/null 2>&1 || true
+    squigglebot play idle >/dev/null 2>&1 || true
+    log "cancelled"
+  elif [[ -f "$dir/busy" ]]; then
+    # Transcription already running: flag it so the release handler discards
+    # the transcript, and settle the UI now rather than when voxtype finishes.
+    touch "$dir/cancelled"
+    omarchy-shell -q squigglebot voiceStop >/dev/null 2>&1 || true
+    squigglebot play idle >/dev/null 2>&1 || true
+    log "cancelled during transcription"
+  fi
+  ;;
+
+*)
+  echo "usage: squigglebot-voice press|release|cancel" >&2
+  exit 1
+  ;;
+esac

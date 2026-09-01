@@ -1,0 +1,6 @@
+#!/bin/bash
+# Omarchy battery-low hook: squigglebot gets uneasy about the battery.
+# $1 is the current battery percentage.
+command -v squigglebot >/dev/null || exit 0
+squigglebot ping >/dev/null 2>&1 || exit 0
+squigglebot say "Battery at ${1:-low}%..." 0 "" frowning >/dev/null 2>&1 || true

@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# squigglebot — drive the squigglebot mascot that lives in the omarchy shell
+# bar (the gersham.squigglebot bar-widget plugin, hosted by SquiggleBotSidebar
+# or any omarchy bar). Talks over the shell's IPC: omarchy-shell squigglebot.
+set -euo pipefail
+
+call() {
+  omarchy-shell squigglebot "$@"
+}
+
+running() {
+  omarchy-shell -q squigglebot ping >/dev/null 2>&1
+}
+
+usage() {
+  cat <<'EOF'
+squigglebot — the mascot in your omarchy bar
+
+Talking:
+  tell <text>                 Send him a message: he mulls it over with the
+                              omarchy default agent and answers in a speech
+                              bubble (or the chat window when it's open).
+                              Supports /commands (try: tell /help) and a
+                              #channel prefix
+  ask                         Toggle the talk-to-him input bubble
+  summon                      Hotkey entry point: input bubble when nothing is
+                              up; dismisses his bubble / the chat window first
+  chat [open|close|toggle]    The breakout chat window: full history with doc
+                              links, channels, conventional LLM chat
+  say <text> [secs] [after]   Make him say something verbatim (no agent)
+  hush                        Dismiss his bubble
+  heard                       Print the last thing you told him
+
+Channels & memory:
+  channel [name|list]         Show, list, or switch the conversation channel
+  channel rm <name>           Delete a channel (memory and all)
+  amnesia [name|all]          Wipe a channel's memory (default: current)
+
+Mood:
+  emotion <name>|clear        Hold an emotion (neutral, curious, angry, ...)
+  play <name>                 Play an animation (thinking, happy, ...)
+  poke                        Startle him
+  sleep | wake                Put him to sleep / wake him
+
+Process:
+  ping | status               Liveness / full state (JSON)
+  restart                     Restart the omarchy shell (reloads the widget)
+
+Appearance lives in the bar-widget settings (shell.json entry for
+gersham.squigglebot): shape, bodyColor, eyeColor, scale, mouth, sleepAfter,
+fidgets, bubbleColor, bubbleTextColor. Agent tuning lives in
+~/.config/squigglebot/config.json or the /model /thinking /mode /agent
+slash commands.
+EOF
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  ping)      call ping ;;
+  status)
+    if command -v jq >/dev/null 2>&1; then call status | jq .; else call status; fi
+    ;;
+  tell)      call tell "${1:?usage: squigglebot tell <text>}" ;;
+  ask)       call ask ;;
+  summon)    call summon ;;
+  chat)      call chat "${1:-toggle}" ;;
+  say)       call sayFor "${1:?usage: squigglebot say <text> [seconds] [after]}" "${2:-0}" "${3:-}" ;;
+  hush)      call hush ;;
+  heard)     call heard ;;
+  emotion)   call emotion "${1:?usage: squigglebot emotion <name>|clear}" ;;
+  play)      call play "${1:?usage: squigglebot play <name>}" ;;
+  poke)      call poke ;;
+  sleep)     call sleep ;;
+  wake)      call wake ;;
+  channel)
+    if [ "${1:-}" = "rm" ]; then call dropChannel "${2:?usage: squigglebot channel rm <name>}"
+    else call channel "${1:-}"; fi
+    ;;
+  amnesia)
+    target="${1:-}"
+    if [ "$target" = "all" ]; then
+      rm -rf ~/.local/state/squigglebot/channels
+      echo "all channel memory wiped"
+    else
+      [ -n "$target" ] || target="$(call channel "")"
+      rm -rf ~/.local/state/squigglebot/channels/"$target"
+      echo "#$target memory wiped"
+    fi
+    ;;
+  restart)   omarchy restart shell ;;
+  help|--help|-h) usage ;;
+  *)
+    echo "unknown command: $cmd (the desktop-mascot commands moved to bar-widget settings — see: squigglebot help)" >&2
+    exit 1
+    ;;
+esac

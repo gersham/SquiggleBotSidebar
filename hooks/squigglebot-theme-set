@@ -1,0 +1,8 @@
+#!/bin/bash
+# Omarchy theme-set hook: squigglebot celebrates the new theme.
+# $1 is the snake-cased theme name. He recolors himself automatically (he
+# watches the theme's colors.toml); this makes him announce it too.
+command -v squigglebot >/dev/null || exit 0
+squigglebot ping >/dev/null 2>&1 || exit 0
+pretty=$(echo "${1:-a new theme}" | tr '-' ' ')
+squigglebot say "Ooh, $pretty!" 0 "" victory-bounce >/dev/null 2>&1 || true

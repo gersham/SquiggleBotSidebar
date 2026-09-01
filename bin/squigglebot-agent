@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# Run the user's omarchy default coding agent headlessly with the squigglebot
+# reply prompt, and emit the agent's JSON reply on stdout.
+#
+# Memory (Hermes-style, per channel under ~/.local/state/squigglebot/channels/):
+#   MEMORY.md    — durable facts, curated by the agent itself (always in prompt)
+#   history.log  — full append-only transcript (agent greps it on demand)
+#   summary.txt  — rolling summary of everything older than the recent tail
+#                  (the prompt gets summary + last 16 lines; compaction runs
+#                  in the background past ~20 uncompacted exchanges)
+#
+# Usage: squigglebot-agent [--channel <name>] <message>
+#        squigglebot-agent [--channel <name>] --compact
+set -uo pipefail
+
+confdir="${XDG_CONFIG_HOME:-$HOME/.config}/squigglebot"
+statedir="${XDG_STATE_HOME:-$HOME/.local/state}/squigglebot"
+docsdir="$HOME/.cache/squigglebot/docs"
+chanbase="$statedir/channels"
+mkdir -p "$statedir" "$docsdir" "$chanbase"
+
+# One-time migration of the old flat layout into the general channel.
+if [[ -s "$statedir/conversation.log" && ! -s "$chanbase/general/history.log" ]]; then
+  mkdir -p "$chanbase/general"
+  mv "$statedir/conversation.log" "$chanbase/general/history.log"
+  [[ -f "$statedir/summary.txt" ]] && mv "$statedir/summary.txt" "$chanbase/general/summary.txt"
+fi
+
+channel="${SQUIGGLE_CHANNEL:-}"
+if [[ ${1:-} == "--channel" ]]; then
+  channel="${2:-}"
+  shift 2
+fi
+[[ -n $channel ]] || channel="$(jq -r '.current // "general"' "$statedir/channels.json" 2>/dev/null || echo general)"
+channel="$(printf '%s' "$channel" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9_-')"
+[[ -n $channel ]] || channel="general"
+
+chdir="$chanbase/$channel"
+mkdir -p "$chdir"
+log="$chdir/history.log"
+summary="$chdir/summary.txt"
+offsetf="$chdir/.summarized"
+memfile="$chdir/MEMORY.md"
+touch "$log"
+
+# Agent tuning from squigglebot's config: which CLI (default: omarchy's
+# default agent), which model, reasoning effort, and agentMode:
+#   read  — read-only (agent default sandbox)
+#   write — can edit files / run commands, sandboxed (default)
+#   full  — no sandbox, no approvals; his hands are fully yours
+cfgjson="$confdir/config.json"
+agent="$(jq -r '.agentCli // empty' "$cfgjson" 2>/dev/null || true)"
+[[ -n $agent ]] || agent="$(cat "$HOME/.config/omarchy/defaults/agent" 2>/dev/null || true)"
+mode="$(jq -r '.agentMode // "write"' "$cfgjson" 2>/dev/null || echo write)"
+model="$(jq -r '.agentModel // empty' "$cfgjson" 2>/dev/null || true)"
+thinking="$(jq -r '.agentThinking // empty' "$cfgjson" 2>/dev/null || true)"
+
+run_agent() { # $1 = prompt
+  local flags=()
+  case "$agent" in
+  codex)
+    case "$mode" in
+    write) flags=(-s workspace-write) ;;
+    full) flags=(--dangerously-bypass-approvals-and-sandbox) ;;
+    esac
+    [[ -n $model ]] && flags+=(-m "$model")
+    [[ -n $thinking ]] && flags+=(-c "model_reasoning_effort=\"$thinking\"")
+    timeout 290 codex exec --skip-git-repo-check "${flags[@]}" "$1" </dev/null 2>/dev/null
+    ;;
+  claude)
+    case "$mode" in
+    write) flags=(--permission-mode acceptEdits) ;;
+    full) flags=(--dangerously-skip-permissions) ;;
+    esac
+    [[ -n $model ]] && flags+=(--model "$model")
+    timeout 290 claude -p "${flags[@]}" "$1" </dev/null 2>/dev/null
+    ;;
+  opencode) timeout 290 opencode run "$1" </dev/null 2>/dev/null ;;
+  crush)
+    [[ $mode == "full" ]] && flags=(-y)
+    timeout 290 crush run -q "${flags[@]}" "$1" </dev/null 2>/dev/null
+    ;;
+  pi | omp) timeout 290 "$agent" -p "$1" </dev/null 2>/dev/null ;;
+  *)
+    echo "squigglebot-agent: no headless runner for omarchy default agent '${agent:-unset}'" >&2
+    return 1
+    ;;
+  esac
+}
+
+flat() { printf '%s' "$1" | tr '\n' ' ' | cut -c1-600; }
+
+# --- background memory compaction: fold older lines into the summary --------
+# The full history.log is never truncated; .summarized tracks how many lines
+# the summary already covers.
+if [[ ${1:-} == "--compact" ]]; then
+  exec 9>"$chdir/.compact.lock"
+  flock -n 9 || exit 0
+  offset="$(cat "$offsetf" 2>/dev/null || echo 0)"
+  total="$(wc -l <"$log")"
+  upto=$((total - 16))
+  ((upto > offset)) || exit 0
+  old="$(sed -n "$((offset + 1)),${upto}p" "$log")"
+  [[ -n $old ]] || exit 0
+  cprompt="Below are an existing summary and older lines of a conversation
+between 'user' and 'squiggle' (their desktop assistant) in the channel
+'#$channel'. Write an updated summary of at most 150 words: keep durable
+facts, preferences, ongoing tasks, and unresolved threads; drop chit-chat.
+Output ONLY the summary text — no headings, no commentary.
+
+Existing summary:
+$(cat "$summary" 2>/dev/null)
+
+Older conversation:
+$old"
+  newsum="$(cd "$HOME" && run_agent "$cprompt")" || exit 0
+  newsum="$(printf '%s' "$newsum" | tr -d '\r' | sed -e 's/^[[:space:]]*//' | head -c 2000)"
+  [[ -n $newsum ]] || exit 0
+  printf '%s\n' "$newsum" >"$summary.tmp" && mv "$summary.tmp" "$summary"
+  printf '%s\n' "$upto" >"$offsetf"
+  exit 0
+fi
+
+# --- normal reply run --------------------------------------------------------
+msg="${1:-$(cat)}"
+[[ -n $msg ]] || exit 1
+
+# Prune long-form docs older than a week.
+find "$docsdir" -maxdepth 1 -name '*.html' -mtime +7 -delete 2>/dev/null
+
+promptfile="$confdir/agent-prompt.md"
+[[ -f $promptfile ]] || promptfile="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/prompts/agent-prompt.md"
+
+memory="Channel: #$channel — this conversation thread is scoped to it.
+Your durable memory file for this channel is $memfile — read it below, and
+UPDATE THE FILE YOURSELF when you learn a lasting fact worth keeping (short
+markdown bullets; prune stale ones). Your full channel history is $log —
+grep it when asked about older specifics that aren't in view.
+
+"
+if [[ -s $memfile ]]; then
+  memory+="Channel memory (durable facts):
+$(cat "$memfile")
+
+"
+fi
+if [[ -s $summary ]]; then
+  memory+="Summary of older conversation:
+$(cat "$summary")
+
+"
+fi
+recent="$(tail -n 16 "$log")"
+if [[ -n $recent ]]; then
+  memory+="Recent exchanges (oldest first):
+$recent
+
+"
+fi
+
+prompt="$(cat "$promptfile")
+
+Save any HTML document under: $docsdir/
+Current local time: $(date '+%A %Y-%m-%d %H:%M')
+
+${memory}User message:
+$msg"
+
+out="$(cd "$HOME" && run_agent "$prompt")" || true
+
+# The reply schema is a flat, single-line JSON object; take the last one in
+# the output so agent preamble/log noise doesn't matter.
+json="$(printf '%s\n' "$out" | grep -oE '\{[^{}]*\}' | tail -1)"
+
+# Log the exchange for next time.
+printf 'user: %s\n' "$(flat "$msg")" >>"$log"
+if [[ -n $json ]]; then
+  say="$(printf '%s' "$json" | jq -r '.say // empty' 2>/dev/null || true)"
+  [[ -n $say ]] && printf 'squiggle: %s\n' "$(flat "$say")" >>"$log"
+else
+  printf 'squiggle: (no reply)\n' >>"$log"
+fi
+
+# Compact in the background once ~20 exchanges are uncompacted.
+offset="$(cat "$offsetf" 2>/dev/null || echo 0)"
+if (($(wc -l <"$log") - offset > 40)); then
+  nohup "$0" --channel "$channel" --compact >/dev/null 2>&1 &
+fi
+
+if [[ -n $json ]]; then
+  printf '%s\n' "$json"
+else
+  exit 2
+fi
