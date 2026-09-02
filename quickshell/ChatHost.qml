@@ -402,13 +402,24 @@ Item {
     property string voicePhase: ""
     readonly property bool voiceUp: voicePhase !== ""
     readonly property int voiceBars: 24
-    property var voiceLevels: []
+    // Live visualizer, not a scrolling history: every bar follows the
+    // current mic level through a centre-weighted envelope with its own
+    // jitter, so the whole graph moves with your voice. The level is the
+    // recorder's raw peak (speech sits around 0.1–0.3), so it gets gain.
+    property real voiceLevel: 0
+    property int voiceTick: 0
     property string voiceText: ""
 
     function voiceReset() {
-        const l = []
-        for (let i = 0; i < voiceBars; i++) l.push(0.08)
-        voiceLevels = l
+        voiceLevel = 0
+        voiceTick = 0
+    }
+
+    function voiceBarLevel(index) {
+        const n = voiceBars
+        const envelope = 0.3 + 0.7 * Math.sin(Math.PI * (index + 0.5) / n)
+        const jitter = 0.72 + 0.28 * Math.sin(index * 1.7 + voiceTick * 2.3) * Math.cos(index * 0.6 - voiceTick * 1.1)
+        return Math.min(1, voiceLevel * envelope * jitter)
     }
 
     function voiceBegin() {
@@ -422,8 +433,10 @@ Item {
     }
 
     function voicePush(v) {
-        const level = Math.min(1, Math.max(0, Number(v) || 0))
-        voiceLevels = voiceLevels.slice(1).concat([level])
+        const level = Math.min(1, Math.max(0, Number(v) || 0) * 3.2)
+        // Fast attack, softer release.
+        voiceLevel = level > voiceLevel ? voiceLevel * 0.3 + level * 0.7 : voiceLevel * 0.55 + level * 0.45
+        voiceTick += 1
     }
 
     function voiceTranscribing() {
@@ -466,12 +479,15 @@ Item {
         onTriggered: root.voiceEnd()
     }
 
-    // With no fresh levels (transcribing) the bars decay to a calm shimmer.
+    // With no fresh levels the bars settle back toward the baseline.
     Timer {
         interval: 120
         repeat: true
-        running: root.voicePhase === "recording" || root.voicePhase === "transcribing"
-        onTriggered: root.voiceLevels = root.voiceLevels.map(l => Math.max(0.06, l * 0.82))
+        running: root.voicePhase === "recording"
+        onTriggered: {
+            root.voiceLevel = root.voiceLevel * 0.8
+            root.voiceTick += 1
+        }
     }
 
     // The box's ✕ means different things per state.
@@ -833,22 +849,24 @@ Item {
                 }
 
                 // Voice: the waveform lives here, in the box, not over the mascot.
+                // Recording only; while transcribing the bars give way to the
+                // centred label.
                 Row {
                     id: voiceWave
-                    visible: root.voicePhase === "recording" || root.voicePhase === "transcribing"
-                    x: inputWin.padH
+                    visible: root.voicePhase === "recording"
+                    x: Math.round((inputCloseBtn.x - width) / 2)
                     anchors.verticalCenter: parent.verticalCenter
                     height: Math.round(parent.height * 0.6)
                     spacing: 3
                     readonly property real barW: Math.max(3, Math.min(10, Math.floor(
-                        (inputCloseBtn.x - inputWin.padH * 2 - transcribingLabel.width - spacing * root.voiceBars) / root.voiceBars)))
+                        (inputCloseBtn.x - inputWin.padH * 2 - spacing * root.voiceBars) / root.voiceBars)))
 
                     Repeater {
                         model: root.voiceBars
 
                         Rectangle {
                             required property int index
-                            readonly property real level: root.voiceLevels[index] || 0
+                            readonly property real level: root.voiceTick >= 0 ? root.voiceBarLevel(index) : 0
                             width: voiceWave.barW
                             radius: width / 2
                             anchors.verticalCenter: parent.verticalCenter
@@ -862,12 +880,11 @@ Item {
                     }
                 }
 
+                // Centred in the box (the part left of the ✕ rail).
                 Text {
                     id: transcribingLabel
                     visible: root.voicePhase === "transcribing"
-                    width: visible ? implicitWidth : 0
-                    anchors.right: inputCloseBtn.left
-                    anchors.rightMargin: inputWin.padH * 0.6
+                    x: Math.round((inputCloseBtn.x - width) / 2)
                     anchors.verticalCenter: parent.verticalCenter
                     text: "transcribing…"
                     font.pixelSize: Math.max(11, inputWin.fontPx * 0.6)
