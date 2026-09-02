@@ -748,7 +748,7 @@ Item {
 
             entry: modelData
             region: "top"
-            panel: panel
+            hostPanel: panel
           }
         }
       }
@@ -773,7 +773,7 @@ Item {
 
             entry: modelData
             region: "middle"
-            panel: panel
+            hostPanel: panel
           }
         }
       }
@@ -795,7 +795,7 @@ Item {
 
             entry: modelData
             region: "bottom"
-            panel: panel
+            hostPanel: panel
           }
         }
       }
@@ -810,8 +810,10 @@ Item {
     property var entry: null
     // Sidebar slot this cell sits in ("top"/"middle"/"bottom") and the
     // SidebarPanel that owns it — the drop is resolved against that panel.
+    // (Not named `panel`: a binding `panel: panel` would resolve to the
+    // cell's own property before the panel id.)
     property string region: ""
-    property var panel: null
+    property var hostPanel: null
 
     width: root.columnWidth
     height: widgetItem ? Math.max(0, Math.round(widgetItem.implicitHeight)) : 0
@@ -823,11 +825,11 @@ Item {
 
     Component.onCompleted: {
       root.registerModuleCell(cell)
-      if (cell.panel) cell.panel.registerCell(cell)
+      if (cell.hostPanel) cell.hostPanel.registerCell(cell)
     }
     Component.onDestruction: {
       root.unregisterModuleCell(cell)
-      if (cell.panel) cell.panel.unregisterCell(cell)
+      if (cell.hostPanel) cell.hostPanel.unregisterCell(cell)
       if (root.dragCell === cell) root.clearDrag()
     }
     readonly property var moduleSettings: root.entrySettings(entry)
@@ -888,7 +890,8 @@ Item {
       anchors.fill: parent
       acceptedButtons: Qt.LeftButton
       enabled: cell.width > 0 && cell.height > 0
-      cursorShape: root.clickTargetAt(cell, mouseX, mouseY) ? Qt.PointingHandCursor : Qt.ArrowCursor
+      // No cursorShape: an assigned cursor here would sit over the widget's
+      // own pointing-hand cursor.
 
       onPressed: function(mouse) {
         dragging = false
@@ -898,28 +901,28 @@ Item {
       }
 
       onPositionChanged: function(mouse) {
-        if (!root.canReorder || !(mouse.buttons & Qt.LeftButton) || !cell.panel) return
+        if (!root.canReorder || !(mouse.buttons & Qt.LeftButton) || !cell.hostPanel) return
         if (!dragging && Math.abs(mouse.x - pressedX) + Math.abs(mouse.y - pressedY) >= threshold) {
           dragging = true
           root.dragOffsetX = pressedX
           root.dragOffsetY = pressedY
-          root.dragPanel = cell.panel
+          root.dragPanel = cell.hostPanel
           root.captureDragGhost(cell)
           root.dragCell = cell
         }
         if (!dragging) return
         var winPoint = cell.mapToItem(null, mouse.x, mouse.y)
-        var screenPoint = cell.panel.screenPoint(winPoint)
+        var screenPoint = cell.hostPanel.screenPoint(winPoint)
         root.dragScreenX = screenPoint.x
         root.dragScreenY = screenPoint.y
         // Off the sidebar sideways: no target (a release there cancels).
-        if (winPoint.x < 0 || winPoint.x > cell.panel.width) {
+        if (winPoint.x < 0 || winPoint.x > cell.hostPanel.width) {
           root.dropRegion = ""
           root.dropBefore = ""
           root.dropMarker = null
           return
         }
-        var drop = cell.panel.dropAt(winPoint.y, cell)
+        var drop = cell.hostPanel.dropAt(winPoint.y, cell)
         root.dropRegion = drop.region
         root.dropBefore = drop.before
         root.dropMarker = drop.marker

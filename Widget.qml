@@ -173,6 +173,10 @@ BarWidget {
     if (!root.ctl) return false
     idleReturn.stop()
     afterReturnTimer.stop()
+    // A follow-up queued for an earlier one-shot (ponder → thinking, dozing
+    // → sleeping) must not fire after some later one-shot completes.
+    // Callers that want one set it after this returns.
+    root.onceFollowUp = ""
     try { root.ctl.play(name, Date.now()) } catch (err) { return false }
     root.engineActive = true
     return true
@@ -276,11 +280,8 @@ BarWidget {
     if (root.busyTalking) return "busy"
     drowsyTimer.stop()
     root.drowsy = false
+    if (!startAnim("dozing")) return "error: no dozing animation"
     root.onceFollowUp = "sleeping"
-    if (!startAnim("dozing")) {
-      root.onceFollowUp = ""
-      return "error: no dozing animation"
-    }
     return "dozing"
   }
 
