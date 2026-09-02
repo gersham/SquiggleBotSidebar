@@ -21,6 +21,10 @@ Item {
     property real refHeight: 130
     // Hard cap on the bubble's total width, tail included.
     property real maxWidth: 640
+    // Wider cap used once the text would wrap past two lines at maxWidth —
+    // the same widening the chat input does for long messages. Defaults to
+    // maxWidth, i.e. no widening.
+    property real wideMaxWidth: maxWidth
     property color bubbleColor: "#d3a62a"
     property color textColor: "#000000"
     // Optional long-form document: its title renders underlined and clicking
@@ -65,7 +69,23 @@ Item {
     readonly property bool sideTail: tailEdge === "left" || tailEdge === "right"
     // Reserved column for the break-out button, so text never runs under it.
     readonly property real btnZone: showBreakout ? fontPx * 1.9 : 0
-    readonly property real maxTextW: maxWidth - padH * 2 - (sideTail ? tailW : 0) - btnZone
+    readonly property real chromeW: padH * 2 + (sideTail ? tailW : 0) + btnZone
+    readonly property real narrowTextW: maxWidth - chromeW
+    readonly property bool expanded: wideMaxWidth > maxWidth && probe.lineCount > 2
+    readonly property real maxTextW: (expanded ? wideMaxWidth : maxWidth) - chromeW
+
+    // Invisible twin of the label laid out at the narrow width; its line
+    // count decides whether the bubble widens.
+    Text {
+        id: probe
+
+        visible: false
+        width: root.narrowTextW
+        text: root.markup(root.text)
+        textFormat: Text.StyledText
+        wrapMode: Text.Wrap
+        font.pixelSize: root.fontPx
+    }
 
     implicitWidth: Math.ceil(bubbleLabel.width + padH * 2 + (sideTail ? tailW : 0) + btnZone)
     implicitHeight: Math.ceil(Math.max(minH, bubbleLabel.implicitHeight + padV * 2)

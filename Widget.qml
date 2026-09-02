@@ -568,6 +568,11 @@ BarWidget {
         var window = root.QsWindow.window
         return window && window.screen ? window.screen.width * 0.2 : 640
       }
+      // Long replies get the same 50%-of-screen room the chat input takes.
+      wideMaxWidth: {
+        var window = root.QsWindow.window
+        return window && window.screen ? window.screen.width * 0.5 : 1600
+      }
       bubbleColor: root.resolveColor(root.setting("bubbleColor", "accent"), "#d3a62a")
       textColor: root.resolveColor(root.setting("bubbleTextColor", "#000000"), "#000000")
       docTitle: root.sayDocTitle
