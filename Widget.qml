@@ -718,8 +718,12 @@ BarWidget {
 
     visible: root.bubbleWindowUp
     color: "transparent"
-    implicitWidth: Math.ceil(speech.implicitWidth)
-    implicitHeight: Math.ceil(speech.implicitHeight)
+    // Slack around the bubble for the pop's overshoot (it scales to ~1.1
+    // from its tail edge), or the window clips the swell on the far side.
+    readonly property int slackW: Math.ceil(speech.implicitWidth * 0.14)
+    readonly property int slackH: Math.ceil(speech.implicitHeight * 0.1)
+    implicitWidth: Math.ceil(speech.implicitWidth) + slackW
+    implicitHeight: Math.ceil(speech.implicitHeight) + slackH * 2
 
     anchor {
       id: bubbleAnchor
@@ -758,7 +762,14 @@ BarWidget {
     SpeechBubble {
       id: speech
 
-      anchors.fill: parent
+      // Flush against the tail edge; the slack sits on the far side and
+      // above/below, so the anchored tail never moves.
+      width: implicitWidth
+      height: implicitHeight
+      x: tailEdge === "right" ? parent.width - width
+        : tailEdge === "left" ? 0 : (parent.width - width) / 2
+      y: tailEdge === "top" ? 0 : tailEdge === "bottom" ? parent.height - height
+        : (parent.height - height) / 2
       text: root.bubbleText
       // The tail sits on the edge facing the mascot: bar on the left means
       // the bubble hangs to the right of him, tail on its left edge.

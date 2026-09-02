@@ -616,12 +616,19 @@ Item {
         // by the offset; the box keeps its position and the shadow fills the
         // extra right/bottom sliver.
         readonly property real shadowOff: 3
-        implicitWidth: {
+        // Body size (box + label + shadow); the window adds slack on the far
+        // side and above/below so the pop's overshoot is not clipped.
+        readonly property int bodyW: {
             const sw = screen ? screen.width : 3200
             if (expanded) return Math.round(sw * 0.5) + shadowOff
             return Math.round(Math.min(sw * 0.2, Math.max(380, refH * 2.8))) + shadowOff
         }
-        implicitHeight: Math.ceil(boxH + labelH + shadowOff)
+        readonly property int bodyH: Math.ceil(boxH + labelH + shadowOff)
+        readonly property int slackW: Math.ceil(bodyW * 0.14)
+        readonly property int slackH: Math.ceil(bodyH * 0.1)
+        readonly property bool bodyOnLeft: a && a.side === "right"
+        implicitWidth: bodyW + slackW
+        implicitHeight: bodyH + slackH * 2
 
         anchors {
             top: true
@@ -638,7 +645,7 @@ Item {
                 if (!inputWin.a || !inputWin.screen) return 40
                 // Center the box itself on the mascot; the channel label
                 // rides above it and doesn't shift the box.
-                const gy = inputWin.a.y + inputWin.a.h / 2 - inputWin.boxH / 2 - inputWin.labelH
+                const gy = inputWin.a.y + inputWin.a.h / 2 - inputWin.boxH / 2 - inputWin.labelH - inputWin.slackH
                 return Math.round(Math.min(inputWin.screen.height - inputWin.implicitHeight, Math.max(0, gy)))
             }
         }
@@ -650,6 +657,10 @@ Item {
             id: inputBody
 
             anchors.fill: parent
+            anchors.leftMargin: inputWin.bodyOnLeft ? 0 : inputWin.slackW
+            anchors.rightMargin: inputWin.bodyOnLeft ? inputWin.slackW : 0
+            anchors.topMargin: inputWin.slackH
+            anchors.bottomMargin: inputWin.slackH
             transformOrigin: inputWin.a && inputWin.a.side === "right" ? Item.Left : Item.Right
             // Plain values (see SpeechBubble): bindings on inputShown would
             // snap to hidden before the pop-out plays.
