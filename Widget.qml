@@ -229,8 +229,8 @@ BarWidget {
   // Ignored long enough, he gets drowsy (drowsy idle, yawny fidgets) part
   // way through the countdown, then nods off (`dozing`) into the sleeping
   // loop; any activity wakes him with a stretch (`waking`).
-  readonly property real sleepAfterS: setting("sleepAfter", 60)
-  readonly property real drowsyFraction: setting("drowsyAt", 0.55)
+  readonly property real sleepAfterS: setting("sleepAfter", 600)
+  readonly property real drowsyFraction: setting("drowsyAt", 0.7)
   readonly property bool asleep: currentAnim === "sleeping" || currentAnim === "dozing"
   property bool drowsy: false
   readonly property bool busyTalking: saying

@@ -117,8 +117,8 @@ then stretch him tall (volume-preserving squash in the renderer), and his
 happy/excited loops bounce. Idling rotates between a plain idle and a perky
 one, with fidgets every 12–32s (glances, looking around, head tilts, peeks,
 hops, bounces, wiggles, stretches, yawns — never the same one twice in a
-row). Ignored past `drowsyAt` (default 55%) of `sleepAfter` seconds (widget
-setting, default 60) he goes drowsy — heavy lids, sparser and yawnier
+row). Ignored past `drowsyAt` (default 70%) of `sleepAfter` seconds (widget
+setting, default 600 — ten minutes) he goes drowsy — heavy lids, sparser and yawnier
 fidgets — then nods off through a nodding sequence into a deflated,
 closed-eye, breathing sleep, and wakes with a stretch. A workspace switch
 draws a glance when he is idle and has a `workspaceStartleChance` (default

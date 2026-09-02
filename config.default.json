@@ -10,7 +10,7 @@
   "mouth": true,
   "mouseFollow": false,
   "lookGain": 1.0,
-  "sleepAfter": 60,
+  "sleepAfter": 600,
   "agentMode": "write",
   "agentModel": "gpt-5.6-luna",
   "agentThinking": "high",
