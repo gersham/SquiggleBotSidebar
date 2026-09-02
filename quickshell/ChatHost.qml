@@ -566,9 +566,22 @@ Item {
         return "listening"
     }
 
+    // The input box pops in and out like the speech bubble; the window stays
+    // up through the pop-out and comes down when the body has shrunk away.
+    readonly property bool inputShown: (root.hearing || root.voiceUp) && !root.chatOpen
+    property bool inputWindowUp: false
+    onInputShownChanged: {
+        inputPopOut.stop()
+        inputPopIn.stop()
+        if (inputShown) {
+            inputWindowUp = true
+            inputPopIn.restart()
+        } else inputPopOut.restart()
+    }
+
     PanelWindow {
         id: inputWin
-        visible: (root.hearing || root.voiceUp) && !root.chatOpen
+        visible: root.inputWindowUp
         color: "transparent"
         // Ignore, not a zero zone: margins below are computed in absolute
         // screen coordinates from the mascot's anchorRect, but a zero-zone
@@ -630,188 +643,227 @@ Item {
             }
         }
 
-        // The channel, outside and above the box; #general stays unlabelled.
-        // Its shadow is a black twin offset behind it — sharp, no blur.
-        Text {
-            visible: channelLabel.visible
-            x: channelLabel.x + 2
-            y: channelLabel.y + 2
-            text: channelLabel.text
-            font: channelLabel.font
-            color: "#000000"
-        }
+        // Everything the window draws, so the pop-in/pop-out can scale it as
+        // one piece from the side facing the mascot — the same elastic
+        // inflate and squish-then-collapse as his speech bubble.
+        Item {
+            id: inputBody
 
-        Text {
-            id: channelLabel
-            visible: inputWin.channelShown
-            anchors.left: parent.left
-            anchors.leftMargin: inputRect.radius
-            anchors.bottom: inputRect.top
-            anchors.bottomMargin: 2
-            text: "#" + root.currentChannel
-            font.pixelSize: Math.max(11, inputWin.fontPx * 0.55)
-            font.bold: true
-            color: inputRect.border.color
-        }
+            anchors.fill: parent
+            transformOrigin: inputWin.a && inputWin.a.side === "right" ? Item.Left : Item.Right
+            // Plain values (see SpeechBubble): bindings on inputShown would
+            // snap to hidden before the pop-out plays.
+            scale: 0.2
+            opacity: 0
 
-        // The box's shadow: same rounded shape, shifted down-right, hard edge.
-        Rectangle {
-            anchors.fill: inputRect
-            anchors.leftMargin: inputWin.shadowOff
-            anchors.topMargin: inputWin.shadowOff
-            anchors.rightMargin: -inputWin.shadowOff
-            anchors.bottomMargin: -inputWin.shadowOff
-            radius: inputRect.radius
-            color: "#000000"
-        }
+            SequentialAnimation {
+                id: inputPopIn
 
-        Rectangle {
-            id: inputRect
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.rightMargin: inputWin.shadowOff
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: inputWin.shadowOff
-            height: inputWin.boxH
-            radius: Math.min(14, height * 0.28)
-            color: "#000000"
-            border.width: 2
-            border.color: root.host ? root.host.accentHex : "#d3a62a"
-
-            // Close: the bubble grabs the keyboard exclusively, so the mouse
-            // must always have a way out. A full-bleed accent rail down the
-            // box's right edge, black ✕ on it.
-            Rectangle {
-                id: inputCloseBtn
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                width: Math.max(30, inputWin.fontPx * 1.6)
-                color: inputCloseMa.containsMouse
-                    ? Qt.lighter(inputRect.border.color, 1.15)
-                    : inputRect.border.color
-                topRightRadius: inputRect.radius
-                bottomRightRadius: inputRect.radius
-                Text {
-                    anchors.centerIn: parent
-                    text: "✕"
-                    font.pixelSize: Math.max(16, inputWin.fontPx * 0.9)
-                    font.bold: true
-                    color: "#000000"
-                }
-                MouseArea {
-                    id: inputCloseMa
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.dismissInput()
+                PropertyAction { target: inputBody; property: "scale"; value: 0.2 }
+                PropertyAction { target: inputBody; property: "opacity"; value: 0 }
+                ParallelAnimation {
+                    NumberAnimation {
+                        target: inputBody; property: "scale"; to: 1; duration: 340
+                        easing.type: Easing.OutBack; easing.overshoot: 1.7
+                    }
+                    NumberAnimation { target: inputBody; property: "opacity"; to: 1; duration: 110; easing.type: Easing.OutQuad }
                 }
             }
 
-            Flickable {
-                id: inputFlick
-                x: inputWin.padH
-                y: Math.max(inputWin.padV, (parent.height - height) / 2)
-                width: inputCloseBtn.x - x - inputWin.padH * 0.5
-                height: Math.min(inputField.implicitHeight, inputWin.maxViewH)
-                contentWidth: width
-                contentHeight: inputField.implicitHeight
-                clip: true
-                flickableDirection: Flickable.VerticalFlick
-                boundsBehavior: Flickable.StopAtBounds
+            SequentialAnimation {
+                id: inputPopOut
 
-                function ensureVisible(r) {
-                    if (contentY > r.y) contentY = r.y
-                    else if (contentY + height < r.y + r.height) contentY = r.y + r.height - height
+                NumberAnimation { target: inputBody; property: "scale"; to: 1.1; duration: 90; easing.type: Easing.OutQuad }
+                ParallelAnimation {
+                    NumberAnimation { target: inputBody; property: "scale"; to: 0.1; duration: 190; easing.type: Easing.InCubic }
+                    NumberAnimation { target: inputBody; property: "opacity"; to: 0; duration: 190; easing.type: Easing.InQuad }
                 }
-
-                TextEdit {
-                    id: inputField
-                    width: inputFlick.width
-                    wrapMode: TextEdit.Wrap
-                    font.pixelSize: inputWin.fontPx
-                    font.bold: true
-                    color: root.host ? root.host.fgHex : "#d2d0c8"
-                    selectionColor: inputRect.border.color
-                    cursorVisible: root.hearing
-                    readOnly: root.voicePhase !== ""
-                    focus: true
-
-                    onTextChanged: {
-                        if (text.length > 4000) {
-                            text = text.slice(0, 4000)
-                            cursorPosition = text.length
-                        }
-                        const m = text.match(/^#([A-Za-z0-9_-]+)\s/)
-                        if (m) {
-                            root.switchChannel(m[1])
-                            const pos = cursorPosition
-                            text = text.slice(m[0].length)
-                            cursorPosition = Math.max(0, pos - m[0].length)
-                        }
-                        if (lineCount > 2) inputWin.expanded = true
-                        else if (text.length === 0) inputWin.expanded = false
-                    }
-                    onCursorRectangleChanged: inputFlick.ensureVisible(cursorRectangle)
-                    Keys.onPressed: event => root.debugKey("down", event)
-                    Keys.onReleased: event => root.debugKey("up", event)
-                    Keys.onReturnPressed: event => {
-                        if (event.modifiers & Qt.ShiftModifier) {
-                            event.accepted = false
-                        } else if (event.modifiers & Qt.ControlModifier) {
-                            root.closeInput(true)
-                            root.openChat()
-                        } else {
-                            root.closeInput(true)
-                        }
-                    }
-                    Keys.onEnterPressed: event => root.closeInput(true)
-                    Keys.onEscapePressed: event => root.closeInput(false)
-                }
+                ScriptAction { script: if (!root.inputShown) root.inputWindowUp = false }
             }
 
-            // Voice: the waveform lives here, in the box, not over the mascot.
-            Row {
-                id: voiceWave
-                visible: root.voicePhase === "recording" || root.voicePhase === "transcribing"
-                x: inputWin.padH
-                anchors.verticalCenter: parent.verticalCenter
-                height: Math.round(parent.height * 0.6)
-                spacing: 3
-                readonly property real barW: Math.max(3, Math.min(10, Math.floor(
-                    (inputCloseBtn.x - inputWin.padH * 2 - transcribingLabel.width - spacing * root.voiceBars) / root.voiceBars)))
-
-                Repeater {
-                    model: root.voiceBars
-
-                    Rectangle {
-                        required property int index
-                        readonly property real level: root.voiceLevels[index] || 0
-                        width: voiceWave.barW
-                        radius: width / 2
-                        anchors.verticalCenter: parent.verticalCenter
-                        height: Math.max(3, voiceWave.height * (0.08 + level * 0.92))
-                        color: inputRect.border.color
-
-                        Behavior on height {
-                            NumberAnimation { duration: 90 }
-                        }
-                    }
-                }
+            // The channel, outside and above the box; #general stays unlabelled.
+            // Its shadow is a black twin offset behind it — sharp, no blur.
+            Text {
+                visible: channelLabel.visible
+                x: channelLabel.x + 2
+                y: channelLabel.y + 2
+                text: channelLabel.text
+                font: channelLabel.font
+                color: "#000000"
             }
 
             Text {
-                id: transcribingLabel
-                visible: root.voicePhase === "transcribing"
-                width: visible ? implicitWidth : 0
-                anchors.right: inputCloseBtn.left
-                anchors.rightMargin: inputWin.padH * 0.6
-                anchors.verticalCenter: parent.verticalCenter
-                text: "transcribing…"
-                font.pixelSize: Math.max(11, inputWin.fontPx * 0.6)
-                font.italic: true
+                id: channelLabel
+                visible: inputWin.channelShown
+                anchors.left: parent.left
+                anchors.leftMargin: inputRect.radius
+                anchors.bottom: inputRect.top
+                anchors.bottomMargin: 2
+                text: "#" + root.currentChannel
+                font.pixelSize: Math.max(11, inputWin.fontPx * 0.55)
+                font.bold: true
                 color: inputRect.border.color
-                opacity: 0.85
+            }
+
+            // The box's shadow: same rounded shape, shifted down-right, hard edge.
+            Rectangle {
+                anchors.fill: inputRect
+                anchors.leftMargin: inputWin.shadowOff
+                anchors.topMargin: inputWin.shadowOff
+                anchors.rightMargin: -inputWin.shadowOff
+                anchors.bottomMargin: -inputWin.shadowOff
+                radius: inputRect.radius
+                color: "#000000"
+            }
+
+            Rectangle {
+                id: inputRect
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.rightMargin: inputWin.shadowOff
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: inputWin.shadowOff
+                height: inputWin.boxH
+                radius: Math.min(14, height * 0.28)
+                color: "#000000"
+                border.width: 2
+                border.color: root.host ? root.host.accentHex : "#d3a62a"
+
+                // Close: the bubble grabs the keyboard exclusively, so the mouse
+                // must always have a way out. A full-bleed accent rail down the
+                // box's right edge, black ✕ on it.
+                Rectangle {
+                    id: inputCloseBtn
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: Math.max(30, inputWin.fontPx * 1.6)
+                    color: inputCloseMa.containsMouse
+                        ? Qt.lighter(inputRect.border.color, 1.15)
+                        : inputRect.border.color
+                    topRightRadius: inputRect.radius
+                    bottomRightRadius: inputRect.radius
+                    Text {
+                        anchors.centerIn: parent
+                        text: "✕"
+                        font.pixelSize: Math.max(16, inputWin.fontPx * 0.9)
+                        font.bold: true
+                        color: "#000000"
+                    }
+                    MouseArea {
+                        id: inputCloseMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.dismissInput()
+                    }
+                }
+
+                Flickable {
+                    id: inputFlick
+                    x: inputWin.padH
+                    y: Math.max(inputWin.padV, (parent.height - height) / 2)
+                    width: inputCloseBtn.x - x - inputWin.padH * 0.5
+                    height: Math.min(inputField.implicitHeight, inputWin.maxViewH)
+                    contentWidth: width
+                    contentHeight: inputField.implicitHeight
+                    clip: true
+                    flickableDirection: Flickable.VerticalFlick
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    function ensureVisible(r) {
+                        if (contentY > r.y) contentY = r.y
+                        else if (contentY + height < r.y + r.height) contentY = r.y + r.height - height
+                    }
+
+                    TextEdit {
+                        id: inputField
+                        width: inputFlick.width
+                        wrapMode: TextEdit.Wrap
+                        font.pixelSize: inputWin.fontPx
+                        font.bold: true
+                        color: root.host ? root.host.fgHex : "#d2d0c8"
+                        selectionColor: inputRect.border.color
+                        cursorVisible: root.hearing
+                        readOnly: root.voicePhase !== ""
+                        focus: true
+
+                        onTextChanged: {
+                            if (text.length > 4000) {
+                                text = text.slice(0, 4000)
+                                cursorPosition = text.length
+                            }
+                            const m = text.match(/^#([A-Za-z0-9_-]+)\s/)
+                            if (m) {
+                                root.switchChannel(m[1])
+                                const pos = cursorPosition
+                                text = text.slice(m[0].length)
+                                cursorPosition = Math.max(0, pos - m[0].length)
+                            }
+                            if (lineCount > 2) inputWin.expanded = true
+                            else if (text.length === 0) inputWin.expanded = false
+                        }
+                        onCursorRectangleChanged: inputFlick.ensureVisible(cursorRectangle)
+                        Keys.onPressed: event => root.debugKey("down", event)
+                        Keys.onReleased: event => root.debugKey("up", event)
+                        Keys.onReturnPressed: event => {
+                            if (event.modifiers & Qt.ShiftModifier) {
+                                event.accepted = false
+                            } else if (event.modifiers & Qt.ControlModifier) {
+                                root.closeInput(true)
+                                root.openChat()
+                            } else {
+                                root.closeInput(true)
+                            }
+                        }
+                        Keys.onEnterPressed: event => root.closeInput(true)
+                        Keys.onEscapePressed: event => root.closeInput(false)
+                    }
+                }
+
+                // Voice: the waveform lives here, in the box, not over the mascot.
+                Row {
+                    id: voiceWave
+                    visible: root.voicePhase === "recording" || root.voicePhase === "transcribing"
+                    x: inputWin.padH
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: Math.round(parent.height * 0.6)
+                    spacing: 3
+                    readonly property real barW: Math.max(3, Math.min(10, Math.floor(
+                        (inputCloseBtn.x - inputWin.padH * 2 - transcribingLabel.width - spacing * root.voiceBars) / root.voiceBars)))
+
+                    Repeater {
+                        model: root.voiceBars
+
+                        Rectangle {
+                            required property int index
+                            readonly property real level: root.voiceLevels[index] || 0
+                            width: voiceWave.barW
+                            radius: width / 2
+                            anchors.verticalCenter: parent.verticalCenter
+                            height: Math.max(3, voiceWave.height * (0.08 + level * 0.92))
+                            color: inputRect.border.color
+
+                            Behavior on height {
+                                NumberAnimation { duration: 90 }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    id: transcribingLabel
+                    visible: root.voicePhase === "transcribing"
+                    width: visible ? implicitWidth : 0
+                    anchors.right: inputCloseBtn.left
+                    anchors.rightMargin: inputWin.padH * 0.6
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "transcribing…"
+                    font.pixelSize: Math.max(11, inputWin.fontPx * 0.6)
+                    font.italic: true
+                    color: inputRect.border.color
+                    opacity: 0.85
+                }
             }
         }
     }

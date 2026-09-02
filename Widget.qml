@@ -696,10 +696,27 @@ BarWidget {
   // there instead).
   readonly property string barPosition: bar && bar.position ? String(bar.position) : "left"
 
+  // The window stays up through the bubble's pop-out and comes down only
+  // once the content has shrunk away (SpeechBubble.hidden).
+  readonly property bool bubbleShown: root.saying && !(chatHost.item && chatHost.item.chatOpen)
+  property bool bubbleWindowUp: false
+  onBubbleShownChanged: if (bubbleShown) bubbleWindowUp = true
+  // What the bubble draws: frozen at the last thing said, so the text does
+  // not vanish (collapsing the bubble) before the pop-out has played.
+  property string bubbleText: ""
+  property string bubbleDocTitle: ""
+  property string bubbleDocPath: ""
+  onSayTextChanged: {
+    if (root.sayText === "") return
+    root.bubbleText = root.sayText
+    root.bubbleDocTitle = root.sayDocTitle
+    root.bubbleDocPath = root.sayDocPath
+  }
+
   PopupWindow {
     id: bubbleWindow
 
-    visible: root.saying && !(chatHost.item && chatHost.item.chatOpen)
+    visible: root.bubbleWindowUp
     color: "transparent"
     implicitWidth: Math.ceil(speech.implicitWidth)
     implicitHeight: Math.ceil(speech.implicitHeight)
@@ -742,7 +759,7 @@ BarWidget {
       id: speech
 
       anchors.fill: parent
-      text: root.sayText
+      text: root.bubbleText
       // The tail sits on the edge facing the mascot: bar on the left means
       // the bubble hangs to the right of him, tail on its left edge.
       tailEdge: root.barPosition === "right" ? "right"
@@ -760,9 +777,11 @@ BarWidget {
       }
       bubbleColor: root.resolveColor(root.setting("bubbleColor", "accent"), "#d3a62a")
       textColor: root.resolveColor(root.setting("bubbleTextColor", "#000000"), "#000000")
-      docTitle: root.sayDocTitle
-      docPath: root.sayDocPath
+      docTitle: root.bubbleDocTitle
+      docPath: root.bubbleDocPath
       showBreakout: chatHost.item !== null
+      shown: root.bubbleShown
+      onHidden: if (!root.bubbleShown) root.bubbleWindowUp = false
       onDismissed: root.hush()
       onBreakout: {
         root.hush()

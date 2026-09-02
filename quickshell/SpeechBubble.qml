@@ -35,6 +35,62 @@ Item {
 
     signal dismissed()
     signal breakout()
+    // Pop-in / pop-out. The host flips `shown`; the bubble inflates from its
+    // tail with an elastic overshoot and, on dismissal, squishes then shrinks
+    // back into the tail — the same squash-and-stretch language as squiggle
+    // himself. `hidden` fires once the pop-out has finished, so the host can
+    // take the window down without the compositor's own popup animation
+    // showing anything (the content is already gone).
+    property bool shown: true
+    signal hidden()
+
+    transformOrigin: tailEdge === "left" ? Item.Left
+        : tailEdge === "right" ? Item.Right
+        : tailEdge === "top" ? Item.Top : Item.Bottom
+    // Plain values, not bindings on `shown`: a binding would snap to the
+    // hidden state the instant `shown` flips and the pop-out would play on an
+    // already invisible bubble.
+    scale: 1
+    opacity: 1
+    Component.onCompleted: {
+        if (!shown) {
+            scale = 0.2
+            opacity = 0
+        }
+    }
+
+    onShownChanged: {
+        popOut.stop()
+        popIn.stop()
+        if (shown) popIn.restart()
+        else popOut.restart()
+    }
+
+    SequentialAnimation {
+        id: popIn
+
+        PropertyAction { target: root; property: "scale"; value: 0.2 }
+        PropertyAction { target: root; property: "opacity"; value: 0 }
+        ParallelAnimation {
+            NumberAnimation {
+                target: root; property: "scale"; to: 1; duration: 340
+                easing.type: Easing.OutBack; easing.overshoot: 1.7
+            }
+            NumberAnimation { target: root; property: "opacity"; to: 1; duration: 110; easing.type: Easing.OutQuad }
+        }
+    }
+
+    SequentialAnimation {
+        id: popOut
+
+        // Anticipation: a quick swell before the collapse.
+        NumberAnimation { target: root; property: "scale"; to: 1.1; duration: 90; easing.type: Easing.OutQuad }
+        ParallelAnimation {
+            NumberAnimation { target: root; property: "scale"; to: 0.1; duration: 190; easing.type: Easing.InCubic }
+            NumberAnimation { target: root; property: "opacity"; to: 0; duration: 190; easing.type: Easing.InQuad }
+        }
+        ScriptAction { script: root.hidden() }
+    }
 
     // Simple markdown (**bold**, *italic*, __underline__) plus the doc link.
     function markup(raw) {
