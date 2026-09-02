@@ -105,7 +105,7 @@ Item {
     property bool pondering: false
     property var sendQueue: []
     property var replyQueue: []
-    readonly property var ponderPool: ["thinking", "thinking", "thinking", "curious", "listening", "tilt", "peek"]
+    readonly property var ponderPool: ["thinking", "thinking", "thinking", "thinking", "look-around", "wiggle", "tilt", "peek"]
 
     // Central send path: "/command" runs locally; a leading "#channel "
     // switches (and sticks to) that channel; "#channel" alone just switches.

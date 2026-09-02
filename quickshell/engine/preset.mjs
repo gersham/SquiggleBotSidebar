@@ -64,6 +64,31 @@ export function addExpressiveSet(def) {
       pose: createPose({ pitch: -4, yaw: -8, roll: 6, squash: 0.04, lift: -4, leftEye: eye(1.3, 1.38, 0, -2, -5), rightEye: eye(1.3, 1.38, 0, -2, 5) }),
       motion: motion('boing'),
     },
+    // Hover: eyes swivel inward at the cursor, slightly crossed, with a
+    // faint wobble to sell the effort of focusing on something that close.
+    'cross-eyed': {
+      label: 'Cross-eyed',
+      pose: createPose({ pitch: -3, roll: 2, squash: 0.02, gazeY: -1, leftEye: eye(0.92, 0.96, 8, 0, 8), rightEye: eye(0.92, 0.96, -8, 0, -8) }),
+      motion: motion('none', 'micro-saccades'),
+    },
+    // Thinking: eyes dart (micro-saccades) while he snaps between looking up,
+    // sideways and down, with an "aha" pop thrown in.
+    'think-up': {
+      label: 'Think (up)',
+      pose: createPose({ pitch: 6, yaw: 14, roll: -8, gazeX: 4, gazeY: -9, leftEye: eye(1.0, 0.92), rightEye: eye(1.0, 0.92) }),
+      motion: motion('slow-drift', 'micro-saccades'),
+    },
+    'think-side': {
+      label: 'Think (side)',
+      pose: createPose({ pitch: -3, yaw: -17, roll: 6, squash: 0.03, gazeX: -6, leftEye: eye(1.06, 0.62, 0, -1, -6), rightEye: eye(0.96, 1.0, 0, 1, 4) }),
+      motion: motion('none', 'micro-saccades'),
+    },
+    'think-down': {
+      label: 'Think (down)',
+      pose: createPose({ pitch: -11, yaw: 5, roll: -3, gazeY: 6, leftEye: eye(1.0, 0.86), rightEye: eye(1.0, 0.86) }),
+      motion: motion('none', 'micro-saccades'),
+    },
+    'think-pop': { label: 'Think (pop)', pose: createPose({ pitch: 2, squash: -0.06, lift: -7, gazeY: -3, leftEye: eye(1.15, 1.15), rightEye: eye(1.15, 1.15) }) },
     perky: { label: 'Perky', pose: createPose({ pitch: 3, squash: -0.04, lift: -3, gazeY: -2, leftEye: eye(1, 1.1), rightEye: eye(1, 1.1) }) },
 
     // --- fidget poses
@@ -117,6 +142,15 @@ export function addExpressiveSet(def) {
       step('bouncy-beaming', 2400, 620, 'spring'),
       step('cheeky', 1600, 570),
     ], { ambient: 0.48, blink: 'bright' }),
+    thinking: loop('Thinking', [
+      step('think-up', 700, 320, 'quick'),
+      step('think-side', 600, 300, 'quick'),
+      step('think-down', 500, 280, 'quick'),
+      step('think-up', 800, 340, 'quick'),
+      step('think-pop', 240, 260, 'spring'),
+      step('think-side', 700, 300, 'quick'),
+      step('skyward', 600, 360, 'quick'),
+    ], { ambient: 0.55, blink: 'bright' }),
     surprised: once('Surprised', [
       step('neutral', 60, 110, 'quick'),
       step('squished', 90, 150, 'quick'),
@@ -247,7 +281,7 @@ export function addExpressiveSet(def) {
       step('neutral', 400, 0),
     ], { ambient: 0.3, blink: 'bright' }),
   }
-  const replaced = ['idle', 'happy', 'surprised', 'victory-bounce', 'sleeping']
+  const replaced = ['idle', 'thinking', 'happy', 'surprised', 'victory-bounce', 'sleeping']
   for (const name of Object.keys(animations)) {
     if (def.animations[name] && replaced.indexOf(name) === -1) continue
     const usable = animations[name].steps.every(s => def.expressions[s.expression])
@@ -312,7 +346,8 @@ export function addMouthAnimations(def) {
     shy: ['line', 0.55], sad: ['frown', 0.9], sleepy: ['line', 0.6],
     confident: ['smile', 0.8], angry: ['frown', 1], uneasy: ['frown', 0.7],
     squished: ['line', 0.9], landing: ['line', 0.85], stretched: ['o', 0.6], startled: ['o', 1.1],
-    'bouncy-beaming': ['smile', 1], perky: ['smile', 0.7], drowsy: ['line', 0.6],
+    'bouncy-beaming': ['smile', 1], perky: ['smile', 0.7], drowsy: ['line', 0.6], 'cross-eyed': ['o', 0.45],
+    'think-up': ['line', 0.7], 'think-side': ['line', 0.6], 'think-down': ['line', 0.7], 'think-pop': ['o', 0.7],
     nodding: ['line', 0.5], asleep: ['line', 0.5], yawning: ['o', 1.2], 'yawn-peak': ['o', 1.35],
   }
   for (const name of Object.keys(animationMouths)) {

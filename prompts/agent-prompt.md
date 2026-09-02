@@ -27,7 +27,8 @@ Fields:
   wiggle, stretch, tilt, peek, look-around, yawn, none. Default: happy.
 - "emotion" (optional): instead of "after", hold a facial emotion for a few
   seconds. One of: neutral, focused, curious, skyward, soft-gaze, side-eye,
-  beaming, cheeky, surprised, shy, sad, sleepy, confident, angry, uneasy.
+  beaming, cheeky, surprised, shy, sad, sleepy, confident, angry, uneasy,
+  cross-eyed, drowsy, perky.
   Leave empty unless a held expression fits better than an animation.
 - "seconds" (optional): how long the bubble should stay up. 0 = automatic
   based on reply length.

@@ -109,8 +109,12 @@ one, with fidgets every 12–32s (glances, looking around, head tilts, peeks,
 hops, bounces, wiggles, stretches, yawns — never the same one twice in a
 row). Ignored past `drowsyAt` (default 55%) of `sleepAfter` seconds (widget
 setting, default 60) he goes drowsy — heavy lids, sparser and yawnier
-fidgets — then nods off through a nodding sequence into a closed-eye,
-breathing sleep, and wakes with a stretch; hover makes him curious;
+fidgets — then nods off through a nodding sequence into a deflated,
+closed-eye, breathing sleep, and wakes with a stretch. A workspace switch
+draws a glance when he is idle and has a `workspaceStartleChance` (default
+35%) of jolting him awake, groggy, when he is asleep. He looks at the input
+box while you type or talk in it; hover makes him go cross-eyed at the
+cursor (`hoverExpression`);
 omarchy hooks (`hooks/`, installed via `omarchy hook install`) have him
 announce theme switches and fret about low battery.
 
@@ -122,7 +126,8 @@ announce theme switches and fret about low battery.
   shell.json bar-widget entry would carry): `shape`, `bodyColor`/`eyeColor`
   (hex or theme key — follows theme switches), `scale`, `mouth`,
   `interactive`, `sleepAfter`, `drowsyAt`, `fidgets`, `fidgetMin`/`fidgetMax`
-  (seconds between fidgets), `idleFps`, `busyFps`,
+  (seconds between fidgets), `workspaceGlance`, `workspaceStartleChance`,
+  `workspaceGlanceChance`, `hoverExpression`, `idleFps`, `busyFps`,
   `pokeAnimation`, `bubbleColor`, `bubbleTextColor`, `eyes`.
 - **Agent tuning**: `~/.config/squigglebot/config.json` (`agentMode`,
   `agentModel`, `agentThinking`, `agentTier` fast|flex (codex service tier),

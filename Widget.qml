@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import qs.Commons
 import qs.Ui
 import "quickshell"
@@ -32,6 +33,7 @@ BarWidget {
   readonly property real busyFps: setting("busyFps", 30)
   readonly property string shapeName: setting("shape", "round")
   readonly property string pokeAnimation: setting("pokeAnimation", "surprised")
+  readonly property string hoverExpression: setting("hoverExpression", "cross-eyed")
 
   // Colors accept a hex value or an omarchy theme key. Unlike the desktop
   // mascot, which parses colors.toml itself, the widget runs inside the
@@ -78,11 +80,13 @@ BarWidget {
   // (CHARACTER_SCALE 1.28, body center at 280/280) so the mascot fills its
   // item instead of floating in dead margin. No ground shadow in a bar.
   // The margins leave room for his body language: hops lift him up to
-  // ~42px and a squish bulges him ~20px wider (preset.mjs addExpressiveSet),
-  // and the Mascot renders into a clipped layer.
+  // ~42px and a squish bulges him ~23px wider (preset.mjs addExpressiveSet),
+  // and the Mascot renders into a clipped layer. Taller capsule shapes
+  // stretch their straight section too, so the vertical margin grows with
+  // the height-over-width excess (measured: +4.5px for large, +8 for tall).
   property var blobDims: ({ w: 220, h: 270 })
-  readonly property real hugPadX: 24
-  readonly property real hugPadY: 44
+  readonly property real hugPadX: 26
+  readonly property real hugPadY: 46 + Math.max(0, blobDims.h - blobDims.w) * 0.1
   readonly property real hugL: 280 - (blobDims.w / 2) * 1.28 - hugPadX
   readonly property real hugT: 280 - (blobDims.h / 2) * 1.28 - hugPadY
   readonly property real hugW: blobDims.w * 1.28 + hugPadX * 2
@@ -180,10 +184,12 @@ BarWidget {
     startAnim(name)
   }
 
+  // Activity first: asleep, activity() starts the wake animation, and the
+  // requested one must land on top of it, not under it.
   function play(name) {
     if (!root.ctl) return
-    startAnim(name)
     root.activity()
+    startAnim(name)
   }
 
   // Like play, but one-shots chain back into thinking — the ponder rotation.
@@ -197,11 +203,11 @@ BarWidget {
 
   function express(name) {
     if (!root.ctl) return
+    root.activity()
     idleReturn.stop()
     afterReturnTimer.stop()
     try { root.ctl.setExpression(name, Date.now()) } catch (err) {}
     root.engineActive = true
-    root.activity()
   }
 
   // Return to idle — not user activity, so the sleep clock keeps running.
@@ -288,6 +294,54 @@ BarWidget {
 
   function wakeIfAsleep() {
     if (root.asleep) root.wakeUp()
+  }
+
+  // ------------------------------------------------------- workspace swaps
+  //
+  // A workspace switch is a noise in the room: asleep (or nodding off) he
+  // has a `workspaceStartleChance` of jolting awake — groggy, so he drifts
+  // back off — and awake and idle he usually glances up at it.
+  readonly property bool workspaceGlance: setting("workspaceGlance", true)
+  readonly property real workspaceStartleChance: setting("workspaceStartleChance", 0.35)
+  readonly property real workspaceGlanceChance: setting("workspaceGlanceChance", 0.6)
+  property int lastWorkspaceId: -1
+  property double lastWorkspaceReactMs: 0
+
+  function startle() {
+    root.onceFollowUp = ""
+    if (!startAnim("surprised")) return
+    // Jolted awake, not rested: back to the drowsy idle, and the sleep
+    // countdown runs from the wake (sleepTimer restarts as asleep clears).
+    root.drowsy = true
+  }
+
+  function onWorkspaceSwapped() {
+    if (!root.workspaceGlance || !root.ctl || root.busyTalking) return
+    var now = Date.now()
+    if (now - root.lastWorkspaceReactMs < 1500) return
+    if (root.asleep) {
+      if (Math.random() < root.workspaceStartleChance) {
+        root.lastWorkspaceReactMs = now
+        startle()
+      }
+    } else if (root.idling && Math.random() < root.workspaceGlanceChance) {
+      root.lastWorkspaceReactMs = now
+      playQuiet(Math.random() < 0.7 ? "glance" : "look-around")
+    }
+  }
+
+  Connections {
+    target: Hyprland
+
+    function onFocusedWorkspaceChanged() {
+      var ws = Hyprland.focusedWorkspace
+      var id = ws ? ws.id : -1
+      var previous = root.lastWorkspaceId
+      root.lastWorkspaceId = id
+      // The first report at startup is not a swap.
+      if (previous === -1 || id === -1 || id === previous) return
+      root.onWorkspaceSwapped()
+    }
   }
 
   // ---------------------------------------------------------------- fidgets
@@ -556,19 +610,40 @@ BarWidget {
   }
 
   MouseArea {
+    id: hoverArea
+
     anchors.fill: parent
     enabled: root.interactive
     visible: root.interactive
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
-    onEntered: {
-      // Waking him is the reaction; the curious look waits for a hover
-      // that finds him already awake.
-      var wasAsleep = root.asleep
-      root.activity()
-      if (!wasAsleep && !root.busyTalking) root.express("curious")
+    // Hover reacts only once the pointer has rested on him briefly: the
+    // compositor fires enter/exit pairs at layer surfaces on workspace
+    // switches, which used to wake him and reshuffle his idle.
+    property bool reacted: false
+    onEntered: hoverTimer.restart()
+    onExited: {
+      hoverTimer.stop()
+      if (reacted) {
+        reacted = false
+        if (!root.busyTalking) root.rest()
+      }
     }
-    onExited: if (!root.busyTalking) root.rest()
+
+    Timer {
+      id: hoverTimer
+
+      interval: 160
+      onTriggered: {
+        if (!hoverArea.containsMouse) return
+        hoverArea.reacted = true
+        // Waking him is the reaction; the cross-eyed stare waits for a
+        // hover that finds him already awake.
+        var wasAsleep = root.asleep
+        root.activity()
+        if (!wasAsleep && !root.busyTalking) root.express(root.hoverExpression)
+      }
+    }
     onClicked: {
       if (root.cancelInProgress()) return
       if (chatHost.item) chatHost.item.summon()
@@ -893,6 +968,11 @@ BarWidget {
         interactive: root.interactive,
         instances: root.instances().length,
         asleep: root.asleep,
+        drowsy: root.drowsy,
+        idling: root.idling,
+        busyTalking: root.busyTalking,
+        voiceMode: root.voiceMode,
+        voiceUp: c ? c.voiceUp : false,
         saying: root.sayText,
         channel: c ? c.currentChannel : "",
         channels: c ? c.channelList : [],

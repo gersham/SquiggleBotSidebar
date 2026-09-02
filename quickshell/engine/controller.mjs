@@ -85,14 +85,14 @@ export const createController = (definition, options = {}) => {
   }
 
   // Looping animations whose steps carry fast expression motion (boing,
-  // tremble) need the busy frame rate too, not just held expressions —
+  // tremble, darting eyes) need the busy frame rate too, not just held expressions —
   // a bounce sampled at the idle rate stutters.
   const animationHasFastMotion = animation => {
     if (!animation || !Array.isArray(animation.steps)) return false
     return animation.steps.some(step => {
       const expression = definition.expressions[step.expression]
       const m = expression && expression.motion
-      return Boolean(m && (m.body === 'boing' || m.body === 'tremble' || m.eyes === 'tremble'))
+      return Boolean(m && (m.body === 'boing' || m.body === 'tremble' || m.eyes === 'tremble' || m.eyes === 'micro-saccades'))
     })
   }
 
