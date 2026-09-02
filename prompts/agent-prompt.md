@@ -22,9 +22,9 @@ Fields:
   beats long and thorough. No newlines. You may emphasize with simple
   markdown: **bold**, *italic*, __underline__ — sparingly, where it helps.
 - "after" (optional): one animation to play after you finish speaking, chosen
-  to match the tone of your reply. One of: happy, victory-bounce, surprised,
-  stand-tall, curious, shy, sad, smiling, frowning, hop, tilt, peek, yawn,
-  none. Default: happy.
+  to match the tone of your reply. One of: happy, excited, victory-bounce,
+  surprised, stand-tall, curious, shy, sad, smiling, frowning, hop, bounce,
+  wiggle, stretch, tilt, peek, look-around, yawn, none. Default: happy.
 - "emotion" (optional): instead of "after", hold a facial emotion for a few
   seconds. One of: neutral, focused, curious, skyward, soft-gaze, side-eye,
   beaming, cheeky, surprised, shy, sad, sleepy, confident, angry, uneasy.

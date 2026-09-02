@@ -84,6 +84,18 @@ export const createController = (definition, options = {}) => {
     return pose
   }
 
+  // Looping animations whose steps carry fast expression motion (boing,
+  // tremble) need the busy frame rate too, not just held expressions —
+  // a bounce sampled at the idle rate stutters.
+  const animationHasFastMotion = animation => {
+    if (!animation || !Array.isArray(animation.steps)) return false
+    return animation.steps.some(step => {
+      const expression = definition.expressions[step.expression]
+      const m = expression && expression.motion
+      return Boolean(m && (m.body === 'boing' || m.body === 'tremble' || m.eyes === 'tremble'))
+    })
+  }
+
   const startBridge = (fromPose, timestamp, durationMs) => {
     bridge = reducedMotion ? null : { from: fromPose, startedAt: timestamp, durationMs }
   }
@@ -207,9 +219,11 @@ export const createController = (definition, options = {}) => {
       const oncePlaying = !staticExpression && playing
         && definition.animations[animationKey]
         && definition.animations[animationKey].playback === 'once'
+      const loopMoving = !reducedMotion && !staticExpression && playing
+        && animationHasFastMotion(definition.animations[animationKey])
       const mouth = mouthFor()
       const mouthMoving = !sameMouth(mouth, mouthShown) || (mouthShown && mouthGrow < 1)
-      return Boolean(bridge || lookRemaining > 0.002 || expressionMoving || oncePlaying
+      return Boolean(bridge || lookRemaining > 0.002 || expressionMoving || oncePlaying || loopMoving
         || mouthMoving || (playing && mouth && mouth.mode === 'flap'))
     },
     // True while the host must keep ticking frames.

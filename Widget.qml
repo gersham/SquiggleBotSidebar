@@ -77,12 +77,16 @@ BarWidget {
   // Region of the engine's fixed 560x560 viewbox that hugs the blob
   // (CHARACTER_SCALE 1.28, body center at 280/280) so the mascot fills its
   // item instead of floating in dead margin. No ground shadow in a bar.
+  // The margins leave room for his body language: hops lift him up to
+  // ~42px and a squish bulges him ~20px wider (preset.mjs addExpressiveSet),
+  // and the Mascot renders into a clipped layer.
   property var blobDims: ({ w: 220, h: 270 })
-  readonly property real hugPad: 16
-  readonly property real hugL: 280 - (blobDims.w / 2) * 1.28 - hugPad
-  readonly property real hugT: 280 - (blobDims.h / 2) * 1.28 - hugPad
-  readonly property real hugW: blobDims.w * 1.28 + hugPad * 2
-  readonly property real hugH: blobDims.h * 1.28 + hugPad * 2
+  readonly property real hugPadX: 24
+  readonly property real hugPadY: 44
+  readonly property real hugL: 280 - (blobDims.w / 2) * 1.28 - hugPadX
+  readonly property real hugT: 280 - (blobDims.h / 2) * 1.28 - hugPadY
+  readonly property real hugW: blobDims.w * 1.28 + hugPadX * 2
+  readonly property real hugH: blobDims.h * 1.28 + hugPadY * 2
 
   // The bar's cross axis bounds the mascot: slot width in a vertical bar,
   // row height in a horizontal one. The host assigns real geometry after
@@ -155,11 +159,30 @@ BarWidget {
   // ------------------------------------------------------------ public API
   property string currentAnim: ""
   property string onceFollowUp: ""
+  // Any of the idle loops (idle, idle-perky, idle-drowsy).
+  readonly property bool idling: currentAnim.indexOf("idle") === 0
+
+  // Every animation start goes through here: a return-to-idle still pending
+  // from the previous one-shot must not fire on top of the new animation
+  // (it used to knock a fresh doze straight back to idle).
+  function startAnim(name) {
+    if (!root.ctl) return false
+    idleReturn.stop()
+    afterReturnTimer.stop()
+    try { root.ctl.play(name, Date.now()) } catch (err) { return false }
+    root.engineActive = true
+    return true
+  }
+
+  // Play without counting as user activity: used by fidgets and the return
+  // to idle, which must not reset the sleep timer.
+  function playQuiet(name) {
+    startAnim(name)
+  }
 
   function play(name) {
     if (!root.ctl) return
-    try { root.ctl.play(name, Date.now()) } catch (err) {}
-    root.engineActive = true
+    startAnim(name)
     root.activity()
   }
 
@@ -167,21 +190,28 @@ BarWidget {
   function ponder(name) {
     if (!root.ctl) return
     if (name === root.currentAnim) name = "thinking"
-    try { root.ctl.play(name, Date.now()) } catch (err) { return }
+    if (!startAnim(name)) return
     var anim = root.ctl.getDefinition().animations[name]
     if (anim && anim.playback === "once") root.onceFollowUp = "thinking"
-    root.engineActive = true
   }
 
   function express(name) {
     if (!root.ctl) return
+    idleReturn.stop()
+    afterReturnTimer.stop()
     try { root.ctl.setExpression(name, Date.now()) } catch (err) {}
     root.engineActive = true
     root.activity()
   }
 
+  // Return to idle — not user activity, so the sleep clock keeps running.
+  // Which idle depends on how long he has been ignored: drowsy once the
+  // sleep countdown is well along, otherwise mostly plain idle with the
+  // odd perky stretch for variety.
   function rest() {
-    play("idle")
+    if (root.asleep) return
+    if (root.drowsy) playQuiet("idle-drowsy")
+    else playQuiet(Math.random() < 0.3 ? "idle-perky" : "idle")
   }
 
   function poke() {
@@ -189,8 +219,14 @@ BarWidget {
   }
 
   // --------------------------------------------------------------- sleeping
+  //
+  // Ignored long enough, he gets drowsy (drowsy idle, yawny fidgets) part
+  // way through the countdown, then nods off (`dozing`) into the sleeping
+  // loop; any activity wakes him with a stretch (`waking`).
   readonly property real sleepAfterS: setting("sleepAfter", 60)
+  readonly property real drowsyFraction: setting("drowsyAt", 0.55)
   readonly property bool asleep: currentAnim === "sleeping" || currentAnim === "dozing"
+  property bool drowsy: false
   readonly property bool busyTalking: saying
     || voiceMode
     || (chatHost.item && (chatHost.item.hearing || chatHost.item.pondering || chatHost.item.chatOpen || chatHost.item.voiceUp))
@@ -200,26 +236,54 @@ BarWidget {
 
     interval: root.sleepAfterS * 1000
     running: root.visible && root.sleepAfterS > 0 && !root.asleep && !root.busyTalking
+    onRunningChanged: {
+      if (running) drowsyTimer.restart()
+      else drowsyTimer.stop()
+    }
     onTriggered: root.goToSleep()
   }
 
-  function activity() {
-    if (root.asleep) root.wakeUp()
-    else if (sleepTimer.running) sleepTimer.restart()
+  Timer {
+    id: drowsyTimer
+
+    interval: Math.max(1000, root.sleepAfterS * 1000 * Math.min(0.95, Math.max(0.1, root.drowsyFraction)))
+    onTriggered: {
+      if (!sleepTimer.running) return
+      root.drowsy = true
+      if (root.idling) root.rest()
+    }
   }
 
+  function activity() {
+    root.drowsy = false
+    if (root.asleep) root.wakeUp()
+    else if (sleepTimer.running) {
+      sleepTimer.restart()
+      drowsyTimer.restart()
+    }
+  }
+
+  // Returns what happened, so `squigglebot sleep` can report a refusal.
   function goToSleep() {
-    if (!root.ctl || root.busyTalking) return
+    if (!root.ctl) return "error: no engine"
+    if (root.asleep) return "already asleep"
+    if (root.busyTalking) return "busy"
+    drowsyTimer.stop()
+    root.drowsy = false
     root.onceFollowUp = "sleeping"
-    try { root.ctl.play("dozing", Date.now()) } catch (err) { root.onceFollowUp = "" }
-    root.engineActive = true
+    if (!startAnim("dozing")) {
+      root.onceFollowUp = ""
+      return "error: no dozing animation"
+    }
+    return "dozing"
   }
 
   function wakeUp() {
     root.onceFollowUp = ""
+    root.drowsy = false
     if (!root.ctl) return
-    try { root.ctl.play("waking", Date.now()) } catch (err) {}
-    root.engineActive = true
+    // Dozing interrupted mid-nod skips the big stretch; he just perks up.
+    startAnim(root.currentAnim === "dozing" ? "surprised" : "waking")
   }
 
   function wakeIfAsleep() {
@@ -227,24 +291,48 @@ BarWidget {
   }
 
   // ---------------------------------------------------------------- fidgets
+  //
+  // One-shots from preset.mjs, weighted: small looks most often, body
+  // business (hop, bounce, wiggle, stretch) now and then. Drowsy fidgets are
+  // sleepier. A fidget never repeats back to back.
   readonly property bool fidgetsOn: setting("fidgets", true)
-  readonly property var fidgetPool: ["glance", "glance", "tilt", "tilt", "peek", "peek", "hop", "yawn"]
+  readonly property real fidgetMinS: setting("fidgetMin", 12)
+  readonly property real fidgetMaxS: setting("fidgetMax", 32)
+  readonly property var fidgetPool: [
+    "glance", "glance", "glance", "look-around",
+    "tilt", "tilt", "tilt-right",
+    "peek", "peek",
+    "hop", "bounce", "wiggle", "stretch",
+    "yawn"
+  ]
+  readonly property var drowsyFidgetPool: ["yawn", "yawn", "yawn", "stretch", "glance", "tilt"]
+  property string lastFidget: ""
+
+  function nextFidgetMs() {
+    var lo = Math.max(3, root.fidgetMinS) * 1000
+    var hi = Math.max(lo, root.fidgetMaxS * 1000)
+    // Drowsy: sparser, so the drift toward sleep reads as winding down.
+    var mult = root.drowsy ? 1.4 : 1
+    return (lo + Math.random() * (hi - lo)) * mult
+  }
+
+  function pickFidget() {
+    var pool = root.drowsy ? root.drowsyFidgetPool : root.fidgetPool
+    var pick = pool[Math.floor(Math.random() * pool.length)]
+    if (pick === root.lastFidget && pool.length > 1) pick = pool[Math.floor(Math.random() * pool.length)]
+    root.lastFidget = pick
+    return pick
+  }
 
   Timer {
     id: fidgetTimer
 
     repeat: true
-    running: root.fidgetsOn && root.visible && root.currentAnim === "idle" && !root.busyTalking
-    onRunningChanged: if (running) interval = 15000 + Math.random() * 25000
+    running: root.fidgetsOn && root.visible && root.idling && !root.busyTalking
+    onRunningChanged: if (running) interval = root.nextFidgetMs()
     onTriggered: {
-      if (root.currentAnim === "idle" && !root.busyTalking) {
-        var pick = root.fidgetPool[Math.floor(Math.random() * root.fidgetPool.length)]
-        if (root.ctl) {
-          try { root.ctl.play(pick, Date.now()) } catch (err) {}
-          root.engineActive = true
-        }
-      }
-      interval = 15000 + Math.random() * 25000
+      if (root.idling && !root.busyTalking) root.playQuiet(root.pickFidget())
+      interval = root.nextFidgetMs()
     }
   }
 
@@ -279,13 +367,29 @@ BarWidget {
     speakTimer.interval = Math.min(ms, Math.max(1500, 600 + words * 400))
     speakTimer.restart()
     play("speaking")
-    if (root.ctl) {
-      var pos = bar && bar.position ? String(bar.position) : "left"
-      var look = pos === "left" ? [0.9, 0]
-        : pos === "right" ? [-0.9, 0]
-        : pos === "bottom" ? [0, -0.9] : [0, 0.9]
-      root.ctl.setLookTarget(look[0], look[1])
-    }
+    lookAtBubble()
+  }
+
+  // He faces whichever side of the bar the bubbles hang on: his own speech
+  // bubble while saying, and the input box while you type or talk in it.
+  readonly property bool inputBubbleUp: chatHost.item ? (chatHost.item.hearing || chatHost.item.voiceUp) && !chatHost.item.chatOpen : false
+  readonly property bool lookingAtBubble: saying || inputBubbleUp
+  onLookingAtBubbleChanged: if (lookingAtBubble) lookAtBubble(); else lookAway()
+
+  function lookAtBubble() {
+    if (!root.ctl) return
+    var pos = root.barPosition
+    var look = pos === "left" ? [0.9, 0.1]
+      : pos === "right" ? [-0.9, 0.1]
+      : pos === "bottom" ? [0, -0.9] : [0, 0.9]
+    root.ctl.setLookTarget(look[0], look[1])
+    root.engineActive = true
+  }
+
+  function lookAway() {
+    if (!root.ctl || root.lookingAtBubble) return
+    root.ctl.clearLookTarget()
+    root.engineActive = true
   }
 
   function hush() {
@@ -300,7 +404,7 @@ BarWidget {
     if (!root.saying) return
     root.sayText = ""
     if (!root.ctl) return
-    root.ctl.clearLookTarget()
+    lookAway()
     // Queued replies (ChatHost) take over instead of the after-animation.
     if (chatHost.item && chatHost.item.onHostSayEnded(completed)) {
       root.engineActive = true
@@ -311,8 +415,11 @@ BarWidget {
       var def = root.ctl.getDefinition()
       var next = completed && root.sayAfter && def.animations[root.sayAfter]
         ? root.sayAfter : "idle"
-      play(next)
-      if (next !== "idle" && def.animations[next].playback === "loop") afterReturnTimer.restart()
+      if (next === "idle") rest()
+      else {
+        play(next)
+        if (def.animations[next].playback === "loop") afterReturnTimer.restart()
+      }
     }
     root.engineActive = true
   }
@@ -455,8 +562,11 @@ BarWidget {
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
     onEntered: {
+      // Waking him is the reaction; the curious look waits for a hover
+      // that finds him already awake.
+      var wasAsleep = root.asleep
       root.activity()
-      if (!root.busyTalking) root.express("curious")
+      if (!wasAsleep && !root.busyTalking) root.express("curious")
     }
     onExited: if (!root.busyTalking) root.rest()
     onClicked: {
@@ -764,8 +874,7 @@ BarWidget {
     }
 
     function sleep(): string {
-      root.goToSleep()
-      return "ok"
+      return root.goToSleep()
     }
 
     function wake(): string {

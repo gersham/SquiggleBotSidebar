@@ -526,7 +526,7 @@ Item {
         hearing = false
         let sent = false
         if (send && text) sent = sendUserText(text)
-        if (host && !sent && !host.saying) host.play(pondering ? "thinking" : "idle")
+        if (host && !sent && !host.saying) { if (pondering) host.play("thinking"); else host.rest() }
         if (!hearing && replyQueue.length > 0 && host && !host.saying) {
             const next = replyQueue[0]
             replyQueue = replyQueue.slice(1)

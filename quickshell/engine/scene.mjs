@@ -5,6 +5,13 @@ const CAMERA_DISTANCE = 650
 const BODY_CENTER_Y = 280
 
 const fixed = value => Number((Number.isFinite(value) ? value : 0).toFixed(3))
+
+// Local addition (not upstream): squash preserves volume. Upstream only
+// scales the body's height by (1 - squash); a squished blob should also
+// bulge outward and a stretched one thin out, or the squish reads as the
+// character shrinking rather than compressing. x and z scale by
+// 1/sqrt(1 - squash), the volume-preserving factor for an ellipsoid.
+const squashBulge = squash => 1 / Math.sqrt(Math.max(0.2, 1 - (squash ?? 0)))
 const degreesToRadians = degrees => (Math.PI * degrees) / 180
 
 const normalizedPose = pose => ({
@@ -39,7 +46,8 @@ const rotatePoint = ([x, y, z], rawPose) => {
 
 const projectPoint = (point, rawPose) => {
   const pose = normalizedPose(rawPose)
-  const squashed = [point[0], point[1] * (1 - pose.squash), point[2]]
+  const bulge = squashBulge(pose.squash)
+  const squashed = [point[0] * bulge, point[1] * (1 - pose.squash), point[2] * bulge]
   const [x, y, z] = rotatePoint(squashed, pose)
   const perspective = CAMERA_DISTANCE / (CAMERA_DISTANCE - z)
   return {
@@ -158,9 +166,10 @@ const projectedBodyPath = (blob, rawPose) => {
   const radius = Math.min(blob.width, blob.height) / 2
   const bodyDepth = Math.min(blob.width, blob.height) * (150 / 220)
   const squash = 1 - pose.squash
-  const basisX = rotatePoint([radius, 0, 0], pose)
+  const bulge = squashBulge(pose.squash)
+  const basisX = rotatePoint([radius * bulge, 0, 0], pose)
   const basisY = rotatePoint([0, radius * squash, 0], pose)
-  const basisZ = rotatePoint([0, 0, bodyDepth / 2], pose)
+  const basisZ = rotatePoint([0, 0, (bodyDepth / 2) * bulge], pose)
   const columns = [basisX, basisY, basisZ].map(([x, y]) => [x, y])
   const qxx = columns.reduce((sum, column) => sum + column[0] ** 2, 0)
   const qxy = columns.reduce((sum, column) => sum + column[0] * column[1], 0)
@@ -191,7 +200,7 @@ const riggedPoint = ([x, y], blob, rawPose) => {
   const yawScale = Math.max(0.8, 1 - Math.abs(pose.yaw) * 0.005)
   const pitchScale = Math.max(0.9, 1 - Math.abs(pose.pitch) * 0.0025)
   const verticalProgress = y / Math.max(1, blob.height / 2)
-  const bentX = x * yawScale + pose.yaw * verticalProgress * 0.18
+  const bentX = x * yawScale * squashBulge(pose.squash) + pose.yaw * verticalProgress * 0.18
   const bentY = y * (1 - pose.squash) * pitchScale
   const roll = degreesToRadians(pose.roll)
   return {
