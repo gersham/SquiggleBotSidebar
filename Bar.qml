@@ -222,6 +222,118 @@ Item {
     Quickshell.execDetached(["sh", "-c", String(command)])
   }
 
+  // ------------------------------------------------------ widget dragging
+  //
+  // Same gesture as the built-in bar: press a widget and pull it past a
+  // small threshold to lift it; a ghost follows the pointer and an accent
+  // marker shows where it lands. Drops go through the shell's config
+  // mutation so shell.json is the single source of truth, and the three
+  // sidebar slots map back onto the bar's left/center/right sections. A
+  // press that never turns into a drag is forwarded to the widget's own
+  // click target, exactly as the built-in bar forwards it.
+  readonly property bool canReorder: root.shell && typeof root.shell.mutateShellConfig === "function"
+  property var dragCell: null
+  property var dragPanel: null
+  property url dragImageUrl: ""
+  property real dragScreenX: 0
+  property real dragScreenY: 0
+  property real dragOffsetX: 0
+  property real dragOffsetY: 0
+  // Resolved drop: sidebar region ("top"/"middle"/"bottom"), the entry to
+  // insert before ("" = append), and the marker line in screen coordinates.
+  property string dropRegion: ""
+  property string dropBefore: ""
+  property var dropMarker: null
+
+  readonly property var regionToSection: ({ top: "left", middle: "center", bottom: "right" })
+
+  function clearDrag() {
+    dragCell = null
+    dragPanel = null
+    dragImageUrl = ""
+    dropRegion = ""
+    dropBefore = ""
+    dropMarker = null
+  }
+
+  function captureDragGhost(cell) {
+    var item = cell ? cell.widgetItem : null
+    root.dragImageUrl = ""
+    if (!item || typeof item.grabToImage !== "function") return
+    var w = Math.max(1, Math.ceil(item.width || cell.width || 1))
+    var h = Math.max(1, Math.ceil(item.height || cell.height || 1))
+    item.grabToImage(function(result) {
+      if (root.dragCell !== cell || !result || !result.url) return
+      root.dragImageUrl = result.url
+    }, Qt.size(w, h))
+  }
+
+  function rawSection(config, section) {
+    if (!config.bar || typeof config.bar !== "object") config.bar = {}
+    if (!config.bar.layout || typeof config.bar.layout !== "object") config.bar.layout = {}
+    if (!Array.isArray(config.bar.layout[section])) config.bar.layout[section] = []
+    return config.bar.layout[section]
+  }
+
+  function rawIndex(entries, name) {
+    for (var i = 0; i < entries.length; i++) if (root.entryId(entries[i]) === name) return i
+    return -1
+  }
+
+  // Move `name` from one bar section to another (or within one), landing
+  // before `beforeName` or at the end. Returns whether anything changed.
+  function moveInConfig(config, fromSection, name, toSection, beforeName) {
+    var from = rawSection(config, fromSection)
+    var to = rawSection(config, toSection)
+    var fromIndex = rawIndex(from, name)
+    if (fromIndex < 0) return false
+    var toIndex = beforeName ? rawIndex(to, beforeName) : to.length
+    if (toIndex < 0) toIndex = to.length
+    var moved = from[fromIndex]
+    from.splice(fromIndex, 1)
+    if (fromSection === toSection && fromIndex < toIndex) toIndex -= 1
+    toIndex = Math.max(0, Math.min(to.length, toIndex))
+    if (fromSection === toSection && fromIndex === toIndex) {
+      from.splice(fromIndex, 0, moved)
+      return false
+    }
+    to.splice(toIndex, 0, moved)
+    return true
+  }
+
+  function dropWidget(cell, toRegion, beforeName) {
+    if (!cell || !cell.region || !cell.moduleName || !toRegion || !root.canReorder) return false
+    if (cell.moduleName === beforeName) return false
+    var fromSection = root.regionToSection[cell.region]
+    var toSection = root.regionToSection[toRegion]
+    if (!fromSection || !toSection) return false
+    var changed = false
+    root.shell.mutateShellConfig(function(config) {
+      changed = root.moveInConfig(config, fromSection, cell.moduleName, toSection, beforeName)
+    })
+    return changed
+  }
+
+  // Click forwarding for a press the drag overlay swallowed: the topmost
+  // registered click target under the point (WidgetButton registers them),
+  // else the widget itself if it is pressable.
+  function clickable(target) {
+    return target && target.visible !== false && target.opacity !== 0
+      && target.interactive !== false && target.pressable !== false
+      && target.concealed !== true && typeof target.triggerPress === "function"
+  }
+
+  function clickTargetAt(cell, localX, localY) {
+    for (var i = root.clickTargets.length - 1; i >= 0; i--) {
+      var target = root.clickTargets[i]
+      if (!clickable(target)) continue
+      var p
+      try { p = cell.mapToItem(target, localX, localY) } catch (e) { continue }
+      if (p.x >= 0 && p.x <= target.width && p.y >= 0 && p.y <= target.height) return target
+    }
+    return clickable(cell.widgetItem) ? cell.widgetItem : null
+  }
+
   // Tooltips are not implemented in the skeleton. Widgets call these
   // unconditionally, so they must exist and must be harmless.
   function showTooltip(target, text) {}
@@ -311,8 +423,144 @@ Item {
     }
   }
 
+  Variants {
+    model: root.takeover ? Quickshell.screens : []
+
+    delegate: Component {
+      DragGhostPanel {
+        required property var modelData
+
+        screen: modelData
+      }
+    }
+  }
+
+  // Visual-only drag feedback on the dragged widget's screen: a snapshot of
+  // the widget under the pointer and the accent drop marker. No input region,
+  // so the cell's MouseArea keeps its pointer grab underneath.
+  component DragGhostPanel: PanelWindow {
+    id: ghost
+
+    readonly property bool active: root.dragCell !== null && root.dragPanel !== null
+      && root.dragPanel.screen === ghost.screen
+    readonly property int pad: 3
+    readonly property real ghostW: root.dragCell ? Math.max(1, root.dragCell.width) : 1
+    readonly property real ghostH: root.dragCell ? Math.max(1, root.dragCell.height) : 1
+
+    visible: active
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: "squigglebotsidebar-drag"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+    mask: Region {}
+
+    anchors {
+      top: true
+      bottom: true
+      left: true
+      right: true
+    }
+
+    Rectangle {
+      visible: ghost.active
+      x: Math.round(root.dragScreenX - root.dragOffsetX - ghost.pad)
+      y: Math.round(root.dragScreenY - root.dragOffsetY - ghost.pad)
+      width: ghost.ghostW + ghost.pad * 2
+      height: ghost.ghostH + ghost.pad * 2
+      radius: 6
+      color: root.background
+      border.color: Util.alpha(root.foreground, 0.7)
+      border.width: 1
+      opacity: 0.94
+
+      Image {
+        anchors.fill: parent
+        anchors.margins: ghost.pad
+        source: root.dragImageUrl
+        fillMode: Image.Stretch
+        smooth: true
+        opacity: 0.85
+      }
+    }
+
+    Rectangle {
+      readonly property var marker: root.dropMarker
+
+      visible: ghost.active && marker !== null
+      x: marker ? Math.round(marker.x) : 0
+      y: marker ? Math.round(marker.y) : 0
+      width: marker ? marker.width : 0
+      height: marker ? marker.height : 0
+      radius: height / 2
+      color: Color.accent
+    }
+  }
+
   component SidebarPanel: PanelWindow {
     id: panel
+
+    // Cells register here so a drop can be resolved against this screen's
+    // own layout.
+    property var cells: []
+
+    function registerCell(cell) {
+      if (!cell || panel.cells.indexOf(cell) !== -1) return
+      var next = panel.cells.slice()
+      next.push(cell)
+      panel.cells = next
+    }
+
+    function unregisterCell(cell) {
+      panel.cells = panel.cells.filter(function(item) { return item !== cell })
+    }
+
+    function sectionFor(region) {
+      return region === "top" ? topSection : region === "middle" ? middleSection : bottomSection
+    }
+
+    // The sidebar's on-screen origin: flush against its edge.
+    function screenPoint(windowPoint) {
+      var x = windowPoint.x
+      if (root.position === "right" && panel.screen) x += Math.max(0, panel.screen.width - panel.width)
+      return { x: x, y: windowPoint.y }
+    }
+
+    // Resolve a drop for a pointer at `winY` (window coordinates). Regions
+    // are split at the midpoints of the empty runs between the stacks, so an
+    // empty middle is still a valid target; within a region the widget lands
+    // before the first cell whose centre is below the pointer.
+    function dropAt(winY, sourceCell) {
+      var topEnd = topSection.mapToItem(null, 0, topSection.height).y
+      var midStart = middleSection.mapToItem(null, 0, 0).y
+      var midEnd = midStart + middleSection.height
+      var botStart = bottomSection.mapToItem(null, 0, 0).y
+      var region = winY < (topEnd + midStart) / 2 ? "top"
+        : winY < (midEnd + botStart) / 2 ? "middle" : "bottom"
+      var section = sectionFor(region)
+      var ordered = panel.cells.filter(function(c) {
+        return c !== sourceCell && c.region === region && c.height > 0
+      }).sort(function(a, b) { return a.y - b.y })
+      var before = null
+      for (var i = 0; i < ordered.length; i++) {
+        var c = ordered[i]
+        var centre = c.mapToItem(null, 0, c.height / 2).y
+        if (winY < centre) { before = c; break }
+      }
+      var markerY
+      if (before) markerY = before.mapToItem(null, 0, 0).y
+      else if (ordered.length) {
+        var last = ordered[ordered.length - 1]
+        markerY = last.mapToItem(null, 0, last.height).y
+      } else markerY = section.mapToItem(null, 0, 0).y
+      var left = panel.screenPoint(section.mapToItem(null, 0, 0))
+      var thickness = 3
+      return {
+        region: region,
+        before: before ? before.moduleName : "",
+        marker: { x: left.x, y: panel.screenPoint({ x: 0, y: markerY }).y - thickness / 2, width: section.width, height: thickness }
+      }
+    }
 
     anchors {
       top: true
@@ -499,14 +747,20 @@ Item {
             required property var modelData
 
             entry: modelData
+            region: "top"
+            panel: panel
           }
         }
       }
 
+      // Centred in the free run between the top and bottom stacks, so the
+      // air above the middle stack equals the air below it.
       Column {
         id: middleSection
 
-        anchors.verticalCenter: parent.verticalCenter
+        readonly property real freeStart: topSection.y + topSection.height
+        readonly property real freeEnd: bottomSection.y
+        y: Math.round(freeStart + (freeEnd - freeStart - height) / 2)
         anchors.horizontalCenter: parent.horizontalCenter
         width: root.gridWidth
         spacing: root.stackGap
@@ -518,6 +772,8 @@ Item {
             required property var modelData
 
             entry: modelData
+            region: "middle"
+            panel: panel
           }
         }
       }
@@ -538,6 +794,8 @@ Item {
             required property var modelData
 
             entry: modelData
+            region: "bottom"
+            panel: panel
           }
         }
       }
@@ -550,15 +808,28 @@ Item {
     id: cell
 
     property var entry: null
+    // Sidebar slot this cell sits in ("top"/"middle"/"bottom") and the
+    // SidebarPanel that owns it — the drop is resolved against that panel.
+    property string region: ""
+    property var panel: null
 
     width: root.columnWidth
     height: widgetItem ? Math.max(0, Math.round(widgetItem.implicitHeight)) : 0
+    // The lifted widget stays in place, dimmed, until the drop re-lays out.
+    opacity: root.dragCell === cell ? 0.35 : 1
 
     readonly property string moduleName: root.entryId(entry)
     readonly property var widgetItem: widgetLoader.item
 
-    Component.onCompleted: root.registerModuleCell(cell)
-    Component.onDestruction: root.unregisterModuleCell(cell)
+    Component.onCompleted: {
+      root.registerModuleCell(cell)
+      if (cell.panel) cell.panel.registerCell(cell)
+    }
+    Component.onDestruction: {
+      root.unregisterModuleCell(cell)
+      if (cell.panel) cell.panel.unregisterCell(cell)
+      if (root.dragCell === cell) root.clearDrag()
+    }
     readonly property var moduleSettings: root.entrySettings(entry)
     // Reading `widgets` (not just calling a lookup function) is what creates
     // the binding dependency, so the cell re-resolves when a plugin loads,
@@ -601,5 +872,77 @@ Item {
     }
 
     onModuleSettingsChanged: injectProps()
+
+    // Drag overlay. Left button only, so right clicks and wheel reach the
+    // widget untouched; a left press is swallowed here and re-issued to the
+    // widget's click target on release unless it became a drag. No hover, so
+    // the widget's own hover affordances keep working underneath.
+    MouseArea {
+      id: dragArea
+
+      property bool dragging: false
+      property real pressedX: 0
+      property real pressedY: 0
+      readonly property real threshold: 10
+
+      anchors.fill: parent
+      acceptedButtons: Qt.LeftButton
+      enabled: cell.width > 0 && cell.height > 0
+      cursorShape: root.clickTargetAt(cell, mouseX, mouseY) ? Qt.PointingHandCursor : Qt.ArrowCursor
+
+      onPressed: function(mouse) {
+        dragging = false
+        pressedX = mouse.x
+        pressedY = mouse.y
+        root.clearDrag()
+      }
+
+      onPositionChanged: function(mouse) {
+        if (!root.canReorder || !(mouse.buttons & Qt.LeftButton) || !cell.panel) return
+        if (!dragging && Math.abs(mouse.x - pressedX) + Math.abs(mouse.y - pressedY) >= threshold) {
+          dragging = true
+          root.dragOffsetX = pressedX
+          root.dragOffsetY = pressedY
+          root.dragPanel = cell.panel
+          root.captureDragGhost(cell)
+          root.dragCell = cell
+        }
+        if (!dragging) return
+        var winPoint = cell.mapToItem(null, mouse.x, mouse.y)
+        var screenPoint = cell.panel.screenPoint(winPoint)
+        root.dragScreenX = screenPoint.x
+        root.dragScreenY = screenPoint.y
+        // Off the sidebar sideways: no target (a release there cancels).
+        if (winPoint.x < 0 || winPoint.x > cell.panel.width) {
+          root.dropRegion = ""
+          root.dropBefore = ""
+          root.dropMarker = null
+          return
+        }
+        var drop = cell.panel.dropAt(winPoint.y, cell)
+        root.dropRegion = drop.region
+        root.dropBefore = drop.before
+        root.dropMarker = drop.marker
+      }
+
+      onReleased: function(mouse) {
+        var wasDragging = dragging
+        var region = root.dropRegion
+        var before = root.dropBefore
+        dragging = false
+        root.clearDrag()
+        if (wasDragging) {
+          if (region) root.dropWidget(cell, region, before)
+          return
+        }
+        var target = root.clickTargetAt(cell, mouse.x, mouse.y)
+        if (target) target.triggerPress(mouse.button)
+      }
+
+      onCanceled: {
+        dragging = false
+        root.clearDrag()
+      }
+    }
   }
 }

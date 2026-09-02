@@ -16,7 +16,15 @@ standalone desktop Quickshell instance either (`quickshell/shell.qml`, the
 - `Bar.qml` — the full-bar entry point. Takes over only when the bar
   position is vertical; otherwise instantiates the built-in `omarchy.bar`
   as a passthrough. Header (Omarchy mark + mascot), the three shell.json
-  widget sections mapped onto the vertical axis, clock.
+  widget sections mapped onto the vertical axis (middle centred in the run
+  between top and bottom), clock. Widgets drag between slots like the
+  built-in bar: a per-cell left-button overlay (`WidgetCell` dragArea) lifts
+  past a 10px threshold, `SidebarPanel.dropAt` resolves region + insertion
+  (regions split at the midpoints of the empty runs, so empty slots accept
+  drops), `DragGhostPanel` draws the snapshot + accent marker, and
+  `dropWidget` writes through `shell.mutateShellConfig` (top/middle/bottom →
+  left/center/right). Non-drag left presses are forwarded to the widget's
+  registered click target (WidgetButton) like the built-in bar does.
 - `Widget.qml` — the squigglebot bar widget, loaded directly by Bar.qml's
   header (no registry lookup): mascot rendering, reactions, say bubble
   (PopupWindow + SpeechBubble beside the bar), sleep/fidgets, voice

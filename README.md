@@ -35,7 +35,17 @@ The header carries the Omarchy mark (left click: root menu, right click:
 terminal) with the mascot beneath it. He idles in your theme's accent color,
 blinks, fidgets, dozes off when ignored. The bar's `left`/`center`/`right`
 widget sections from shell.json keep rendering, translated onto the vertical
-axis (top / middle / bottom), and a clock sits at the foot.
+axis (top / middle / bottom), and a clock sits at the foot. The middle stack
+is centred in the free run between the top and bottom stacks, so the air
+above it equals the air below it.
+
+Widgets drag between and within the three slots exactly like the built-in
+bar: press one and pull it past a few pixels to lift it, a ghost follows the
+pointer with an accent marker at the landing spot, and the drop is written to
+shell.json's `bar.layout` (top = `left`, middle = `center`, bottom = `right`)
+through the shell, so switching back to `omarchy.bar` keeps the same order.
+An empty slot is a valid target. Right clicks and scrolling reach the widget
+untouched; a left click that never became a drag is forwarded to it.
 
 ## Talking to him
 
